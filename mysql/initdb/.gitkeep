@@ -1,0 +1,4 @@
+-- Placeholder.
+-- 001_init.sql / 002_seed.sql 将在 Phase 1 下一个 todo 中实现 (6 张表 DDL + 8 个标签预置).
+-- 文件保留空, 以便 MySQL 8.0 initdb 容器启动时 (docker-entrypoint-initdb.d) 不会因
+-- 无 .sql 文件而失败 (空目录对 initdb 容器来说不是问题, 但留 .gitkeep 可保持目录被纳入版本管理).

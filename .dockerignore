@@ -1,0 +1,63 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build outputs
+build/
+cmake-build-*/
+out/
+bin/
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+build.ninja
+.ninja_*
+rules.ninja
+Testing/
+coverage/
+
+# IDE / editor
+.vscode/
+.vs/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Tests (don't ship into production image)
+tests/
+
+# Logs
+*.log
+logs/
+
+# Local config overrides
+config/local.json
+
+# Node / frontend tooling (we don't use it, but be safe)
+node_modules/
+
+# Docs (not needed in image)
+docs/
+SPEC.md
+README.md
+a.md
+dependence.md
+
+# OS
+.DS_Store
+Thumbs.db

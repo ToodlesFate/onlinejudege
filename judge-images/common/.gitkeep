@@ -1,0 +1,2 @@
+-- Placeholder for Phase 4 (judge-images/common/judge.cpp 等实现时启用).
+-- 此文件留空, 以确保 Docker 构建期 ADD 不会因为目标文件不存在而失败.

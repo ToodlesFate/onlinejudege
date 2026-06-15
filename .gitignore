@@ -72,3 +72,6 @@ secrets.yaml
 *.gcno
 coverage/
 Testing/
+
+# Project notes / interview transcripts (not for the repo)
+a.md

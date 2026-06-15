@@ -1,0 +1,56 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "thread_pool_size": 8
+  },
+  "mysql": {
+    "host": "mysql",
+    "port": 3306,
+    "user": "oj",
+    "password": "oj",
+    "database": "oj",
+    "pool_size": 8,
+    "connect_timeout_sec": 5
+  },
+  "jwt": {
+    "secret": "change-me-in-prod-please-replace-with-32+random-bytes",
+    "access_ttl_sec": 7200,
+    "refresh_ttl_sec": 604800,
+    "issuer": "onlinejudge"
+  },
+  "judge": {
+    "worker_count": 4,
+    "poll_interval_ms": 500,
+    "default_time_limit_ms": 2000,
+    "default_memory_limit_mb": 256,
+    "default_output_limit_mb": 64,
+    "code_max_bytes": 65536,
+    "problem_md_max_bytes": 65536,
+    "work_root": "/tmp/oj",
+    "docker": {
+      "host": "unix:///var/run/docker.sock",
+      "api_version": "v1.41",
+      "request_timeout_sec": 120,
+      "container_wait_buffer_sec": 30
+    },
+    "images": {
+      "c":      "judge-c:1.0",
+      "cpp":    "judge-cpp:1.0",
+      "java":   "judge-java:1.0",
+      "python": "judge-python:1.0",
+      "go":     "judge-go:1.0"
+    }
+  },
+  "log": {
+    "level": "info",
+    "dir": "/var/log/oj",
+    "max_size_mb": 100,
+    "max_files": 10,
+    "stdout": true
+  },
+  "cors": {
+    "allowed_origins": ["http://localhost", "http://localhost:80", "http://localhost:8080"],
+    "allow_credentials": true
+  }
+}

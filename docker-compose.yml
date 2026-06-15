@@ -1,0 +1,184 @@
+# =============================================================================
+#  OnlineJudge — 一键启动 (SPEC §7.2 / §7.3)
+#
+#  用法:
+#    docker compose up -d --build           # 构建并启动 mysql / backend / frontend
+#    docker compose --profile judges build  # 单独构建 5 个判题镜像 (后端按需拉起)
+#    docker compose down -v                 # 停服并清理数据卷
+#
+#  端口:
+#    80    前端 (nginx) ← 浏览器入口
+#    8080  后端直连 (供调试 / 移动端)
+#    3306  MySQL 内部端口 (expose 而非 publish, 容器内可见)
+#
+#  注意:
+#    - backend 通过 /var/run/docker.sock 卷载访问宿主 Docker daemon
+#      (SPEC §3.1 / §7.2: 直接用 DockerClient 创建一次性判题容器)
+#    - judge-* 镜像只是被后端调用的 “镜像池”, 不是长驻服务, 故放入 judges profile
+#      默认 `up` 不会启动它们; 需要 `docker compose --profile judges build` 构建
+# =============================================================================
+
+name: onlinejudge
+
+x-restart-policy: &restart_policy
+  restart: unless-stopped
+
+x-logging: &default_logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  # ------------------------------ MySQL ------------------------------------
+  mysql:
+    <<: *restart_policy
+    image: mysql:8.0
+    container_name: oj_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: oj_root_pw
+      MYSQL_DATABASE:      oj
+      MYSQL_USER:          oj
+      MYSQL_PASSWORD:      oj
+      TZ:                  Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=caching_sha2_password
+      - --max_connections=200
+      - --innodb-buffer-pool-size=256M
+    expose:
+      - "3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "oj", "-poj"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *default_logging
+    networks:
+      - oj_internal
+
+  # ------------------------------ Backend ----------------------------------
+  backend:
+    <<: *restart_policy
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: oj_backend:1.0
+    container_name: oj_backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"            # 调试直连入口
+    volumes:
+      # SPEC §7.2: backend 通过 docker.sock 创建判题容器
+      - /var/run/docker.sock:/var/run/docker.sock
+      # SPEC §3.2.3 log.dir=/var/log/oj
+      - backend_logs:/var/log/oj
+      # SPEC §6.1 /judge/host <-> /judge/work 临时目录 (容器内 /tmp/oj)
+      - judge_work:/tmp/oj
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    logging: *default_logging
+    networks:
+      - oj_internal
+
+  # ------------------------------ Frontend ---------------------------------
+  frontend:
+    <<: *restart_policy
+    image: nginx:alpine
+    container_name: oj_frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"                # 浏览器主入口 (SPEC §7.4)
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    logging: *default_logging
+    networks:
+      - oj_internal
+
+  # ============================================================================
+  #  Judge 镜像池 (profiles: [judges])
+  #  这些不是常驻服务, 不会被 `docker compose up` 启动; 后端按需调用
+  #  构建命令:  docker compose --profile judges build
+  #  对应镜像:  judge-c:1.0 / judge-cpp:1.0 / judge-java:1.0 /
+  #             judge-python:1.0 / judge-go:1.0
+  #  完整 judge.cpp / entrypoint.sh 在后续 Phase 4 实现, 此处仅保留 Dockerfile 占位
+  # ============================================================================
+  judge-c:
+    profiles: ["judges"]
+    build:
+      context: ./judge-images
+      dockerfile: c/Dockerfile
+    image: judge-c:1.0
+    logging: *default_logging
+
+  judge-cpp:
+    profiles: ["judges"]
+    build:
+      context: ./judge-images
+      dockerfile: cpp/Dockerfile
+    image: judge-cpp:1.0
+    logging: *default_logging
+
+  judge-java:
+    profiles: ["judges"]
+    build:
+      context: ./judge-images
+      dockerfile: java/Dockerfile
+    image: judge-java:1.0
+    logging: *default_logging
+
+  judge-python:
+    profiles: ["judges"]
+    build:
+      context: ./judge-images
+      dockerfile: python/Dockerfile
+    image: judge-python:1.0
+    logging: *default_logging
+
+  judge-go:
+    profiles: ["judges"]
+    build:
+      context: ./judge-images
+      dockerfile: go/Dockerfile
+    image: judge-go:1.0
+    logging: *default_logging
+
+# ----------------------------------------------------------------------------
+#  持久化卷
+# ----------------------------------------------------------------------------
+volumes:
+  mysql_data:
+    name: oj_mysql_data
+  backend_logs:
+    name: oj_backend_logs
+  judge_work:
+    name: oj_judge_work
+
+# ----------------------------------------------------------------------------
+#  内部网络 — MySQL 仅 backend 可见, frontend / judge 容器均不加入
+# ----------------------------------------------------------------------------
+networks:
+  oj_internal:
+    name: oj_internal
+    driver: bridge
