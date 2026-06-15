@@ -1231,21 +1231,21 @@ open http://localhost
 
 ## 8. TODO 清单
 
-### 里程碑 M1：基础骨架（5 天）
+### Phases 1 - 基础骨架
 - [ ] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
 - [ ] MySQL 初始化 SQL（建表 + 8 个标签）
 - [ ] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
 - [ ] 前端骨架：单页 + History 路由 + 深色主题 base CSS
 - [ ] Docker Compose 一键启动验证
 
-### 里程碑 M2：账户系统（3 天）
+### Phases 2 - 账户系统
 - [ ] users 表 / Argon2 密码哈希
 - [ ] `/api/auth/register` 实现首注册为 admin 逻辑
 - [ ] `/api/auth/login` + JWT 颁发
 - [ ] `/api/auth/refresh` + Refresh Cookie + 静默刷新
 - [ ] 前端：登录/注册页 + Token 存储 + API 客户端
 
-### 里程碑 M3：题目模块（4 天）
+### Phases 3 - 题目模块
 - [ ] problems / testcases / tags 表 + Repo
 - [ ] `GET /api/problems`（分页、过滤、排序）
 - [ ] `GET /api/problems/{id}`（含样例点）
@@ -1253,7 +1253,7 @@ open http://localhost
 - [ ] 前端：题目列表页 + 题目详情页（Markdown 渲染 + Monaco 编辑器）
 - [ ] localStorage 草稿自动保存
 
-### 里程碑 M4：判题子系统（7 天）
+### Phases 4 - 判题子系统
 - [ ] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控
 - [ ] 5 个 judge 镜像 Dockerfile + entrypoint.sh
 - [ ] DockerClient（C++，libcurl 调用 Engine API）
@@ -1262,16 +1262,16 @@ open http://localhost
 - [ ] `POST /api/submissions` + `GET /api/submissions/{id}`
 - [ ] 前端：提交后 2s 轮询 + 状态机可视化
 
-### 里程碑 M5：后台管理（3 天）
+### Phases 5 - 后台管理
 - [ ] admin API：CRUD + 上下架
 - [ ] 前端：管理后台题目列表 + Monaco Markdown 编辑器 + 客户端预览
 - [ ] 测试点动态增删 + 校验总分 = 100
 
-### 里程碑 M6：提交历史 + 详情（2 天）
+### Phases 6 - 提交历史 + 详情
 - [ ] 提交列表（个人 / 公共）
 - [ ] 提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff
 
-### 里程碑 M7：打磨与验收（3 天）
+### Phases 7 - 打磨与验收
 - [ ] spdlog 接入 + access log
 - [ ] 统一错误中间件
 - [ ] 单元测试（doctest）：Auth / Problem / Judge 关键路径
