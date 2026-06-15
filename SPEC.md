@@ -1232,7 +1232,7 @@ open http://localhost
 ## 8. TODO 清单
 
 ### Phases 1 - 基础骨架
-- [ ] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
+- [x] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
 - [ ] MySQL 初始化 SQL（建表 + 8 个标签）
 - [ ] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
 - [ ] 前端骨架：单页 + History 路由 + 深色主题 base CSS
