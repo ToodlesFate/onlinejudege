@@ -52,6 +52,27 @@ AppConfig parse(Src&& source, std::string_view origin_for_error) {
         if (auto p = l.find("stdout"); p != l.end() && p->is_boolean()) cfg.log.stdout_console = p->get<bool>();
     }
 
+    if (auto it = root.find("mysql"); it != root.end() && it->is_object()) {
+        const auto& m = *it;
+        if (auto p = m.find("host");     p != m.end() && p->is_string())     cfg.mysql.host     = p->get<std::string>();
+        if (auto p = m.find("port");     p != m.end() && p->is_number_integer())
+            cfg.mysql.port = static_cast<std::uint16_t>(p->get<int>());
+        if (auto p = m.find("user");     p != m.end() && p->is_string())     cfg.mysql.user     = p->get<std::string>();
+        if (auto p = m.find("password"); p != m.end() && p->is_string())     cfg.mysql.password = p->get<std::string>();
+        if (auto p = m.find("database"); p != m.end() && p->is_string())     cfg.mysql.database = p->get<std::string>();
+        if (auto p = m.find("pool_size"); p != m.end() && p->is_number_integer()) cfg.mysql.pool_size = p->get<int>();
+        if (auto p = m.find("connect_timeout_sec"); p != m.end() && p->is_number_integer())
+            cfg.mysql.connect_timeout_sec = p->get<int>();
+    }
+
+    if (auto it = root.find("jwt"); it != root.end() && it->is_object()) {
+        const auto& j = *it;
+        if (auto p = j.find("secret");          p != j.end() && p->is_string()) cfg.jwt.secret          = p->get<std::string>();
+        if (auto p = j.find("access_ttl_sec");  p != j.end() && p->is_number_integer()) cfg.jwt.access_ttl_sec  = p->get<int>();
+        if (auto p = j.find("refresh_ttl_sec"); p != j.end() && p->is_number_integer()) cfg.jwt.refresh_ttl_sec = p->get<int>();
+        if (auto p = j.find("issuer");          p != j.end() && p->is_string()) cfg.jwt.issuer          = p->get<std::string>();
+    }
+
     return cfg;
 }
 

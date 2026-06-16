@@ -1236,7 +1236,7 @@ open http://localhost
 
 ### Phases 2 - 账户系统
 - [x] users 表 / Argon2 密码哈希（详见 §9.6 / `docs/phase2-verification.md`）
-- [ ] `/api/auth/register` 实现首注册为 admin 逻辑
+- [x] `/api/auth/register` 实现首注册为 admin 逻辑（详见 §9.7 / `docs/phase3-verification.md`）
 - [ ] `/api/auth/login` + JWT 颁发
 - [ ] `/api/auth/refresh` + Refresh Cookie + 静默刷新
 - [ ] 前端：登录/注册页 + Token 存储 + API 客户端
@@ -1411,6 +1411,55 @@ open http://localhost
 | `docs/phase2-verification.md` | 新增 | 本次验收报告 |
 
 **结论**：Phase 2 第 1 项交付完成，进入第 2 项 `/api/auth/register` 实现首注册为 admin 逻辑。
+
+---
+
+### 9.7 Phase 2 — /api/auth/register 实现首注册为 admin 逻辑（已通过）
+> 触发条件：SPEC §8 TODO「Phases 2 - 账户系统」第 2 项已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与单元测试矩阵见
+> [`docs/phase3-verification.md`](docs/phase3-verification.md)。
+
+**验证时间**：2026-06-16
+**验证环境**：Linux x86_64 / GCC 13.3 / Debian 12 (bookworm) / libmysqlclient 21.2.46 / libargon2 / jwt-cpp 0.7
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 2-2a | `POST /api/auth/register` 接口契约正确 | 响应 data = `{user_id, access_token, is_admin}` + `Set-Cookie: refresh_token=...; HttpOnly; SameSite=Lax; Path=/api/auth` | ✅ |
+| 2-2b | 字段校验（username 3-20 / `[A-Za-z0-9_]`；email 含 @+.；password ≥ 8） | AuthServiceTest 10 项 + AuthHandlerTest 3 项 + E2E TEST E/F | ✅ |
+| 2-2c | 重复 username/email → 1005 Conflict | AuthHandlerTest 2 项 + E2E TEST D | ✅ |
+| 2-2d | **首注册用户 is_admin=true；后续 is_admin=false** | E2E TEST A/B + AuthServiceTest.FirstUserAcrossManyRegistrations（10 连跑）+ MysqlRepoTest 2 项 | ✅ |
+| 2-2e | **并发首注册：恰 1 个 admin** | MysqlRepoTest.ConcurrentFirstRegistrationHasExactlyOneAdmin（8 并发） | ✅ |
+| 2-2f | **InnoDB deadlock 自动重试** | MysqlRepoTest.DeadlockIsRetriedTransparently（pool_size=2 + 8 线程） | ✅ |
+| 2-2g | MySQL 不可用 → 1008 SystemError | AuthHandlerTest.DbDownReturnsEnvelope | ✅ |
+| 2-2h | JWT HS256 签发 + 验证（uid/adm/typ/iss/exp 完整） | JwtServiceTest 26 项（含篡改 / 过期 / 类型错） | ✅ |
+| 2-2i | 密码以 Argon2id 存储（复用 Phase 2） | AuthServiceTest.PasswordIsHashedNotStoredAsPlaintext | ✅ |
+| 2-2j | SQL 注入防御（escape / 参数化） | MysqlClientTest 10 项 escape + MysqlRepoTest.EscapeHandlesQuotesAndBackslashes | ✅ |
+| 2-2k | 175 / 175 单元测试全过 | `./build/oj_unit_tests` 稳定通过 3 次 | ✅ |
+| 2-2l | SPEC §9.4 M-1 分层（Http→Domain←Infra） | IUserRepository 接口在 domain、实现在 infra；handler 不直接依赖 mysql_client | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `backend/include/common/config.hpp` | 修改 | 新增 MysqlConfig / JwtConfig |
+| `backend/src/common/config.cpp` | 修改 | 解析 mysql / jwt 段 |
+| `backend/include/infra/mysql_client.{hpp,cpp}` | 新增 | libmysqlclient 连接池 + RAII Lease |
+| `backend/include/infra/jwt_service.{hpp,cpp}` | 新增 | HS256 颁发/验证 |
+| `backend/include/infra/user_repo.{hpp,cpp}` | 新增 | MysqlUserRepo + deadlock retry |
+| `backend/include/domain/user_repository.hpp` | 新增 | IUserRepository 接口（依赖倒置） |
+| `backend/include/domain/auth_service.{hpp,cpp}` | 新增 | AuthService::register_user |
+| `backend/include/http/handlers/auth_handler.{hpp,cpp}` | 新增 | POST /api/auth/register 路由 |
+| `backend/src/main.cpp` | 修改 | 装配链路 + 注入路由 |
+| `backend/tests/test_jwt_service.cpp` | 新增 | 26 项 JwtService 单测 |
+| `backend/tests/test_mysql_client.cpp` | 新增 | 24 项 MysqlClient 单测 |
+| `backend/tests/test_auth_service.cpp` | 新增 | 20 项 AuthService 单测 |
+| `backend/tests/test_auth_handler.cpp` | 新增 | 11 项 AuthHandler E2E |
+| `backend/tests/test_user_repo_mysql.cpp` | 新增 | 9 项 MysqlUserRepo（含 3 项并发） |
+| `docs/phase3-verification.md` | 新增 | 本次验收报告 |
+
+**结论**：Phase 2 第 2 项 `/api/auth/register 实现首注册为 admin 逻辑` 通过验收，
+进入下一项 `/api/auth/login + JWT 颁发`。
 
 ---
 

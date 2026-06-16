@@ -1,6 +1,10 @@
 // =============================================================================
 //  oj_backend — 主入口
-//  依据 SPEC §3.2.2：仅装配 Common + Http 两层，Phase 1 仅暴露 GET /api/health
+//  依据 SPEC §3.2.2：装配 Common + Http + Domain + Infra 四层
+//
+//  路由：
+//    GET  /api/health
+//    POST /api/auth/register
 //
 //  用法：
 //      oj_backend --config <path> [--log-dir <path>]
@@ -23,8 +27,14 @@
 #include "common/config.hpp"
 #include "common/error_code.hpp"
 #include "common/version.hpp"
+#include "domain/auth_service.hpp"
 #include "http/HttpServer.hpp"
+#include "http/handlers/auth_handler.hpp"
 #include "http/handlers/health_handler.hpp"
+#include "infra/jwt_service.hpp"
+#include "infra/mysql_client.hpp"
+#include "infra/password_hasher.hpp"
+#include "infra/user_repo.hpp"
 
 namespace {
 
@@ -44,7 +54,6 @@ void install_signal_handlers() {
     sa.sa_flags = SA_RESTART;
     sigaction(SIGINT,  &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
-    // 忽略 SIGPIPE —— 客户端断开时 write 不会拖死进程
     signal(SIGPIPE, SIG_IGN);
 }
 
@@ -162,6 +171,18 @@ int main(int argc, char** argv) {
                   << "\"port\":"  << cfg.server.port  << ","
                   << "\"thread_pool_size\":" << cfg.server.thread_pool_size
                   << "},"
+                  << "\"mysql\":" << "{"
+                  << "\"host\":\"" << cfg.mysql.host << "\","
+                  << "\"port\":"  << cfg.mysql.port  << ","
+                  << "\"user\":\"" << cfg.mysql.user << "\","
+                  << "\"database\":\"" << cfg.mysql.database << "\","
+                  << "\"pool_size\":" << cfg.mysql.pool_size
+                  << "},"
+                  << "\"jwt\":" << "{"
+                  << "\"issuer\":\"" << cfg.jwt.issuer << "\","
+                  << "\"access_ttl_sec\":" << cfg.jwt.access_ttl_sec << ","
+                  << "\"refresh_ttl_sec\":" << cfg.jwt.refresh_ttl_sec
+                  << "},"
                   << "\"log\":"   << "{"
                   << "\"level\":\"" << cfg.log.level << "\","
                   << "\"dir\":\""   << cfg.log.dir.string() << "\","
@@ -175,12 +196,37 @@ int main(int argc, char** argv) {
 
     install_signal_handlers();
 
+    // -------------------------------------------------------------------
+    //  装配 Infra 层：MysqlClient → MysqlUserRepo
+    //                  PasswordHasher + JwtService
+    // -------------------------------------------------------------------
+    auto mysql = std::make_shared<infra::MysqlClient>(cfg.mysql);
+    try {
+        mysql->connect();
+    } catch (const std::exception& e) {
+        spdlog::error("MysqlClient::connect failed: {} — /api/auth/* will return 503",
+                      e.what());
+        // 仍继续启动，让 /api/health 仍可访问；register handler 检测 ready
+        // 状态后返回 503。
+    }
+
+    auto users  = std::make_shared<infra::MysqlUserRepo>(mysql);
+    auto hasher = std::make_shared<infra::PasswordHasher>();
+    auto jwt    = std::make_shared<infra::JwtService>(cfg.jwt);
+
+    auto auth_service = std::make_shared<domain::AuthService>(users, hasher, jwt);
+
+    // -------------------------------------------------------------------
+    //  Http 层
+    // -------------------------------------------------------------------
     http::HttpServer server(std::move(cfg));
 
-    // Phase 1 仅暴露健康检查端点
     server.get("/api/health", [&server](const httplib::Request& req, httplib::Response& res) {
         http::handlers::health(req, res, server.uptime_ms());
     });
+
+    http::handlers::register_auth_routes(server, auth_service,
+                                         [mysql]() { return mysql->is_ready(); });
 
     g_server.store(&server, std::memory_order_release);
 
