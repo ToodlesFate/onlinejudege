@@ -35,6 +35,14 @@ pkg_check_modules(LIBARGON2      REQUIRED IMPORTED_TARGET libargon2)
 
 # 允许通过 OJ_LOCAL_DEPS_DIR 指定本地已克隆的依赖目录，
 # 便于在内网/无外网环境下跳过 FetchContent 的 git clone。
+# 留空时默认查找 CWD 下的 .local-deps/ （CWD 即 cmake 调用时的目录，
+# 通常是 backend/，搭配 README 的 "cd backend && cmake -S ." 用法）
+if(DEFINED OJ_LOCAL_DEPS_DIR AND NOT OJ_LOCAL_DEPS_DIR STREQUAL "")
+    get_filename_component(OJ_LOCAL_DEPS_DIR "${OJ_LOCAL_DEPS_DIR}" ABSOLUTE)
+else()
+    set(OJ_LOCAL_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.local-deps")
+endif()
+
 if(DEFINED OJ_LOCAL_DEPS_DIR AND IS_DIRECTORY "${OJ_LOCAL_DEPS_DIR}")
     set(OJ_DEPS_JSON_SRC   "${OJ_LOCAL_DEPS_DIR}/json")
     set(OJ_DEPS_HTTP_SRC   "${OJ_LOCAL_DEPS_DIR}/cpp-httplib")

@@ -75,3 +75,14 @@ Testing/
 
 # Project notes / interview transcripts (not for the repo)
 a.md
+
+# Local-fetched third-party sources (used by OJ_LOCAL_DEPS_DIR in CMake)
+# Only the five expected deps are listed; do not commit the actual source.
+backend/.local-deps/cpp-httplib/
+backend/.local-deps/spdlog/
+backend/.local-deps/jwt-cpp/
+backend/.local-deps/doctest/
+backend/.local-deps/json/
+# Generic fallback so a future dep doesn't accidentally get committed
+backend/.local-deps/*/
+!backend/.local-deps/.keep

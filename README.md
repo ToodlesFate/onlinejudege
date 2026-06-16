@@ -66,6 +66,28 @@ cmake --build build
 ./build/oj_backend --config config/default.json
 ```
 
+#### 离线 / 内网构建（可选）
+
+默认 CMake 会通过 FetchContent 从 GitHub 拉 `cpp-httplib` / `spdlog` / `jwt-cpp` / `doctest` / `nlohmann_json`。
+如果在内网或断网环境，把这些源码 clone 到 `backend/.local-deps/` 下，CMake 会自动走本地路径、不再访问外网：
+
+```bash
+cd backend
+mkdir -p .local-deps && cd .local-deps
+for repo in \
+  "https://github.com/yhirose/cpp-httplib.git|v0.15.3|cpp-httplib" \
+  "https://github.com/gabime/spdlog.git|v1.13.0|spdlog" \
+  "https://github.com/Thalhammer/jwt-cpp.git|v0.7.0|jwt-cpp" \
+  "https://github.com/doctest/doctest.git|v2.4.11|doctest" \
+  "https://github.com/nlohmann/json.git|v3.11.3|json"; do
+  IFS='|' read -r url tag dir <<< "$repo"
+  git clone --depth=1 --branch "$tag" "$url" "$dir"
+done
+cd .. && cmake -S . -B build -G Ninja   # 自动检测 .local-deps/
+```
+
+`backend/.local-deps/` 已被 `.gitignore` 忽略，不会进仓库。
+
 > C++ 后端骨架已就绪：`oj_backend` 监听 `config/default.json:server.port`（默认 `0.0.0.0:8080`），目前只暴露 `GET /api/health`（信封格式 `{"code":0,"message":"ok","data":{...}}`）。Docker HEALTHCHECK 与 docker-compose healthcheck 都依赖它。
 
 ## 文档
