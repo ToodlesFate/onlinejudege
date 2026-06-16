@@ -1176,7 +1176,8 @@ onlinejudge/
 └── docs/                            ← 附加文档（可选）
     ├── architecture.md              ← 架构详细说明
     ├── api.md                       ← API 完整文档（由 SPEC §5 同步）
-    └── dev-guide.md                 ← 本地开发步骤
+    ├── dev-guide.md                 ← 本地开发步骤
+    └── phase1-verification.md       ← Phase 1 一键启动验证报告（AC-1/AC-2 实测）
 ```
 
 **目录用途速查**：
@@ -1231,7 +1232,7 @@ open http://localhost
 - [x] MySQL 初始化 SQL（建表 + 8 个标签）
 - [x] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
 - [x] 前端骨架：单页 + History 路由 + 深色主题 base CSS
-- [ ] Docker Compose 一键启动验证
+- [x] Docker Compose 一键启动验证（详见 §9.5 / Phase 1 验收报告 `docs/phase1-verification.md`）
 
 ### Phases 2 - 账户系统
 - [ ] users 表 / Argon2 密码哈希
@@ -1330,6 +1331,51 @@ open http://localhost
 - [ ] M-2：单元测试覆盖率：Auth 关键路径 ≥ 80%
 - [ ] M-3：README 含本地开发 5 步指南 + 部署指南 + 常见问题
 - [ ] M-4：所有依赖通过 FetchContent 拉取，无 vcpkg / apt 依赖
+
+### 9.5 Phase 1 — Docker Compose 一键启动验证（已通过）
+> 触发条件：SPEC §8 TODO「Phases 1 - 基础骨架」中 5 个 checkbox 已完成 4 个，
+> 仅剩「Docker Compose 一键启动验证」。本节为该项的**端到端实测报告**，
+> 详细命令、原始输出与修复记录见 [`docs/phase1-verification.md`](docs/phase1-verification.md)。
+
+**验证时间**：2026-06-16
+**验证环境**：Linux x86_64 / Docker 29.3.1 / Docker Compose v5.1.1
+
+**验收对照表**：
+
+| # | 验收点 | 命令 | 结果 |
+|---|---|---|---|
+| AC-1a | `docker compose up -d --build` 一次成功 | `docker compose down -v && time docker compose up -d --build` | ✅ ~30 s 完成（warm cache） |
+| AC-1b | 全部服务 healthy | `docker compose ps` | ✅ mysql / backend / frontend 均 `Up (healthy)` |
+| AC-1c | 启动总耗时 < 5 分钟 | `for i in {1..30}; do ...` | ✅ cold + warm 端到端 < 1 分钟 |
+| AC-2a | 浏览器访问 `http://localhost` 返回 HTML | `curl http://127.0.0.1/` | ✅ HTTP 200, 809 B, `text/html; charset=utf-8` |
+| AC-2b | 静态资源 CSS/JS 加载 | `curl /css/base.css /js/main.js` | ✅ 全部 HTTP 200 |
+| AC-2c | SPA fallback（未知路径回 index.html） | `curl /problems /admin/x/y/z` | ✅ 全部 HTTP 200, 809 B |
+| AC-2d | JS 模块导入无 syntax error | `node --check js/*.js` | ✅ main / router / dom / views 全部 OK |
+| AC-3a | 数据库 7 张表均已建 | `SHOW TABLES` | ✅ users / tags / problems / problem_tags / testcases / submissions / submission_cases |
+| AC-3b | 8 个标签已 seed | `SELECT COUNT(*) FROM tags` | ✅ 8 |
+| AC-3b | 标签 utf8mb4 中文正确 | `SELECT name FROM tags` | ✅ 数组 / 字符串 / 链表 / 栈/队列 / 树 / 图 / 动态规划 / 贪心 |
+| AC-3c | backend → mysql 网络通 | `mysqladmin ping -h mysql` | ✅ `mysqld is alive` |
+| AC-4a | `/api/health` 返回信封格式（直连 8080） | `curl :8080/api/health` | ✅ `{code:0, message:"ok", data:{status,version,uptime_ms,now_unix}}` |
+| AC-4b | `/api/health` 经 nginx 反代（80） | `curl :80/api/health` | ✅ 同上 envelope |
+| AC-4c | 后端进程可执行 + logs 正常 | `docker compose logs backend` | ✅ `oj_backend 1.0.0 listening on 0.0.0.0:8080 (threads=8)` |
+
+**修复记录**（验证过程中发现并就地修复）：
+
+1. **`libmysqlclient21` 在 Debian bookworm 不存在** → 替换为 `libmariadb3`
+   （bookworm 的 mysqlclient 是 MariaDB 兼容实现）。
+   影响文件：`backend/Dockerfile` runtime 阶段。
+2. **CMakeLists 缺 install 规则**，`cmake --install build` 不会拷贝任何产物到 `/install/`。
+   补充 `install(TARGETS oj_backend RUNTIME)` 与 `install(FILES default.json)`。
+   影响文件：`backend/CMakeLists.txt`。
+3. **Dockerfile 未拷贝 `backend/.local-deps/`，离线环境 FetchContent 拉 GitHub 必败**。
+   显式 `COPY .local-deps/ ./.local-deps/` 并在 `cmake` 调用处追加
+   `-DOJ_LOCAL_DEPS_DIR=/src/.local-deps`，让构建走本地路径（与 README 的"离线构建"指引一致）。
+   影响文件：`backend/Dockerfile`。
+4. **backend 镜像未装 `curl` CLI**，容器内 healthcheck 失败 → 服务 unhealthy。
+   runtime 阶段追加 `curl` 包。
+   影响文件：`backend/Dockerfile`。
+
+**结论**：Phase 1 基础骨架通过验收，进入 Phase 2（账户系统）开发。
 
 ---
 

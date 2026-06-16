@@ -36,13 +36,18 @@ COPY include/          ./include/
 COPY src/              ./src/
 COPY config/           ./config/
 
+# 2.5) 拷贝离线依赖（如果 backend/.local-deps 存在）。
+#      仓库内未跟踪 .local-deps（见 .gitignore），但本机预 clone 的依赖会随构建上下文进镜像，
+#      让容器内构建无需访问 GitHub；上层 CMakeLists.txt 会自动检测并优先用本地路径。
+COPY .local-deps/      ./.local-deps/
+
 # 3) 配置 + 构建
-#    - 关闭 FetchContent 的 UPDATE，保证离线 / 内网可复现
-#    - 安装到 /install 方便拷贝
+#    - 通过 OJ_LOCAL_DEPS_DIR 显式指向镜像内的 ./.local-deps，让 CMake 走本地路径
+#    - 关闭 OJ_BUILD_TESTS，避免构建 GoogleTest
 RUN cmake -S . -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DOJ_BUILD_TESTS=OFF \
-        -DFETCHCONTENT_FULLY_DISCONNECTED=OFF \
+        -DOJ_LOCAL_DEPS_DIR=/src/.local-deps \
  && cmake --build build --parallel "$(nproc)" \
  && cmake --install build --prefix /install
 
@@ -52,10 +57,11 @@ FROM debian:bookworm-slim AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
         default-mysql-client \
         libcurl4 \
         libargon2-1 \
-        libmysqlclient21 \
+        libmariadb3 \
         libssl3 \
         tini \
     && rm -rf /var/lib/apt/lists/*
@@ -66,9 +72,9 @@ RUN groupadd --system --gid 1000 oj \
 
 WORKDIR /app
 
-# 拷贝编译产物
+# 拷贝编译产物（GNUInstallDirs: bin/ + share/onlinejudge/config/）
 COPY --from=builder /install/bin/oj_backend   /usr/local/bin/oj_backend
-COPY --from=builder /install/config/default.json  /app/config/default.json
+COPY --from=builder /install/share/onlinejudge/config/default.json  /app/config/default.json
 
 # 日志目录（spdlog 轮转目录，参见 SPEC §3.2.3）
 RUN mkdir -p /var/log/oj && chown -R oj:oj /var/log/oj /app

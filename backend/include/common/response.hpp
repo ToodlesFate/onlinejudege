@@ -27,10 +27,6 @@ public:
         return envelope(code, std::move(message), nullptr);
     }
 
-    static void write_ok(Json data = nullptr);
-
-    static void write_error(ErrorCode code, std::string message = {});
-
 private:
     [[nodiscard]] static nlohmann::json envelope(ErrorCode code, std::string message, Json data);
 };

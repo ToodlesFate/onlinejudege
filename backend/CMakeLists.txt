@@ -187,6 +187,14 @@ configure_file(
     COPYONLY
 )
 
+# ---- 安装规则（供多阶段 Dockerfile 用 cmake --install 拷贝产物）-----------
+include(GNUInstallDirs)
+install(TARGETS oj_backend
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES   ${CMAKE_SOURCE_DIR}/config/default.json
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/onlinejudge/config
+        RENAME     default.json)
+
 # 启动时打印版本信息（便于 AC-1 / AC-2 验收时核对）
 target_compile_definitions(oj_backend PRIVATE
     OJ_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}

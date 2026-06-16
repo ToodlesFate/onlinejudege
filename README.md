@@ -7,7 +7,9 @@
 
 ## 当前进度
 
-**Phase 1 — 基础骨架** 进行中（仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml、C++ 后端骨架已就绪：`/api/health` + 容器化健康检查）。
+**Phase 1 — 基础骨架** 已完成 ✅。`docker compose up -d --build` 一次成功 ~30 s，
+`mysql` / `backend` / `frontend` 均 healthy，`/api/health` 返回标准信封格式，
+DB 自动建表 + seed 8 个标签。详见 [`docs/phase1-verification.md`](docs/phase1-verification.md) 与 SPEC §9.5。
 
 ## 仓库结构
 
@@ -94,6 +96,7 @@ cd .. && cmake -S . -B build -G Ninja   # 自动检测 .local-deps/
 
 - [SPEC.md](./SPEC.md) — 完整需求、架构、接口、判题、部署
 - [dependence.md](./dependence.md) — 宿主机开发环境一键安装脚本
+- `docs/phase1-verification.md` — Phase 1 一键启动验证报告
 - `docs/` — 后续补充：architecture / api / dev-guide
 
 ## 许可
