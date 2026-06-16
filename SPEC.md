@@ -1089,8 +1089,8 @@ onlinejudge/
 │   │   ├── domain/                  ← 业务服务实现
 │   │   └── infra/                   ← Repo / Client 实现
 │   │
-│   ├── sql/                         ← 数据库脚本（也由 mysql/initdb 引用）
-│   │   ├── 001_init.sql             ← 6 张表 DDL
+│   ├── sql/                         ← 数据库脚本（MySQL 首次启动自动执行 + 后端 db_init 命令读取）
+│   │   ├── 001_init.sql             ← 7 张表 DDL
 │   │   └── 002_seed.sql             ← 预置 8 个标签
 │   │
 │   ├── tests/                       ← 单元测试（doctest）
@@ -1170,11 +1170,6 @@ onlinejudge/
 │   └── go/
 │       └── Dockerfile               ← 基于 golang:1.22-alpine
 │
-├── mysql/                           ◀── 数据库初始化
-│   └── initdb/
-│       ├── 001_init.sql             ← 与 backend/sql/001_init.sql 同步（首次启动自动执行）
-│       └── 002_seed.sql             ← 预置 8 个标签
-│
 ├── nginx/                           ← 前端可选反向代理
 │   └── nginx.conf                   ← SPA 路由 fallback 到 index.html
 │
@@ -1191,7 +1186,7 @@ onlinejudge/
 | `backend/` | C++20 后端服务 | M1 |
 | `frontend/` | 原生 HTML/CSS/JS 前端 | M1 |
 | `judge-images/` | 5 种语言的判题沙箱镜像 | M4 |
-| `mysql/initdb/` | 首次启动自动建表的 SQL | M1 |
+| `backend/sql/` | 数据库初始化脚本 (MySQL 首次启动自动执行) | M1 |
 | `nginx/` | 反向代理配置（可选） | M1 |
 
 **文件命名约定**：
@@ -1205,7 +1200,7 @@ onlinejudge/
 ### 7.2 docker-compose.yml 服务清单
 | 服务 | 镜像 | 端口 | 卷 | 依赖 |
 |---|---|---|---|---|
-| `mysql` | `mysql:8.0` | 3306 (内部) | `mysql_data:/var/lib/mysql`, `./mysql/initdb` | — |
+| `mysql` | `mysql:8.0` | 3306 (内部) | `mysql_data:/var/lib/mysql`, `./backend/sql` | — |
 | `backend` | `backend:1.0` (本地 build) | 8080 | `./backend`, `docker.sock` | mysql |
 | `frontend` (可选) | `nginx:alpine` | 80 (对外) | `./frontend`, `./nginx.conf` | backend |
 | 各 judge 镜像 | `judge-*:1.0` (本地 build) | — | — | — |
@@ -1233,7 +1228,7 @@ open http://localhost
 
 ### Phases 1 - 基础骨架
 - [x] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
-- [ ] MySQL 初始化 SQL（建表 + 8 个标签）
+- [x] MySQL 初始化 SQL（建表 + 8 个标签）
 - [ ] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
 - [ ] 前端骨架：单页 + History 路由 + 深色主题 base CSS
 - [ ] Docker Compose 一键启动验证
