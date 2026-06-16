@@ -2,17 +2,22 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="OnlineJudge — 5 语言 / Docker 沙箱 / 自动评测">
     <title>OnlineJudge</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 720px; margin: 64px auto; padding: 0 16px; color: #cbd5e1; background: #0b1220; }
-        h1 { color: #f1f5f9; }
-        .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #1e293b; color: #38bdf8; font-size: 12px; }
-    </style>
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/components.css">
 </head>
 <body>
-    <h1>OnlineJudge <span class="pill">Phase 1</span></h1>
-    <p>前端骨架占位 — 真实内容在 Phase 1 下一个 todo 落地。</p>
-    <p>可访问 <a href="/api/health" style="color:#38bdf8">/api/health</a> 验证后端联通。</p>
+    <div id="app" class="app">
+        <noscript>
+            <p style="padding:24px;text-align:center;color:#cbd5e1;">
+                本页面需要启用 JavaScript 才能正常运行。
+            </p>
+        </noscript>
+    </div>
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>

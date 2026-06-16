@@ -1230,7 +1230,7 @@ open http://localhost
 - [x] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
 - [x] MySQL 初始化 SQL（建表 + 8 个标签）
 - [x] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
-- [ ] 前端骨架：单页 + History 路由 + 深色主题 base CSS
+- [x] 前端骨架：单页 + History 路由 + 深色主题 base CSS
 - [ ] Docker Compose 一键启动验证
 
 ### Phases 2 - 账户系统

@@ -1,0 +1,209 @@
+/* =============================================================================
+ *  layout.css — 应用壳：header / main / footer
+ *  依据 SPEC §3.3.5 B：单页 SPA，全局共享 Header + Footer
+ *
+ *  DOM 结构（在 main.js 中装配）：
+ *    <div id="app" class="app">
+ *      <header class="app-header">
+ *        <div class="app-header__inner container">
+ *          <a class="app-header__brand">OnlineJudge</a>
+ *          <nav class="app-header__nav">...</nav>
+ *          <div class="app-header__user">...</div>
+ *        </div>
+ *      </header>
+ *      <main class="app-main" id="view-root">
+ *        <!-- 视图挂载点 -->
+ *      </main>
+ *      <footer class="app-footer">
+ *        <div class="app-footer__inner container">...</div>
+ *      </footer>
+ *    </div>
+ * ============================================================================= */
+
+.app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--bg-0);
+}
+
+/* =============================================================================
+ *  Header
+ * ============================================================================= */
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    height: var(--header-h);
+    background: rgba(17, 26, 46, 0.85);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--border);
+}
+
+.app-header__inner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-5);
+    height: 100%;
+}
+
+.app-header__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    color: var(--fg-0);
+    font-weight: 700;
+    font-size: var(--fs-lg);
+    letter-spacing: 0.2px;
+    text-decoration: none;
+}
+
+.app-header__brand:hover {
+    color: var(--fg-0);
+    text-decoration: none;
+}
+
+.app-header__brand-mark {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(135deg, var(--accent) 0%, #818cf8 100%);
+    box-shadow: var(--sh-1);
+}
+
+.app-header__nav {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    flex: 1;
+}
+
+.app-header__nav a {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-md);
+    color: var(--fg-1);
+    font-size: var(--fs-md);
+    transition:
+        background var(--t-fast) var(--ease-out),
+        color      var(--t-fast) var(--ease-out);
+}
+
+.app-header__nav a:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+    text-decoration: none;
+}
+
+.app-header__nav a.is-active {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.app-header__user {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+/* 窄屏：导航可被压缩；Phase 1 不做汉堡菜单，留出空间即可 */
+@media (max-width: 640px) {
+    .app-header__nav {
+        gap: 0;
+    }
+    .app-header__nav a {
+        padding: 0 var(--sp-2);
+        font-size: var(--fs-sm);
+    }
+    .app-header__user {
+        display: none;
+    }
+}
+
+/* =============================================================================
+ *  Main
+ * ============================================================================= */
+.app-main {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: var(--sp-6) 0 var(--sp-7);
+}
+
+.app-main__inner {
+    width: 100%;
+}
+
+/* =============================================================================
+ *  Footer
+ * ============================================================================= */
+.app-footer {
+    flex: 0 0 auto;
+    height: var(--footer-h);
+    background: var(--bg-1);
+    border-top: 1px solid var(--border);
+    color: var(--fg-2);
+    font-size: var(--fs-sm);
+}
+
+.app-footer__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    height: 100%;
+}
+
+.app-footer a {
+    color: var(--fg-2);
+}
+
+.app-footer a:hover {
+    color: var(--fg-0);
+}
+
+.app-footer__meta {
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+}
+
+/* =============================================================================
+ *  视图通用结构 —— 视图内常用 4 件套
+ * ============================================================================= */
+.view {
+    width: 100%;
+}
+
+.view__header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-5);
+    flex-wrap: wrap;
+}
+
+.view__title {
+    font-size: var(--fs-2xl);
+    font-weight: 600;
+}
+
+.view__subtitle {
+    color: var(--fg-2);
+    font-size: var(--fs-sm);
+    margin-top: var(--sp-1);
+}
+
+.view__actions {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+    flex-wrap: wrap;
+}

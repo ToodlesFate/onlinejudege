@@ -1,0 +1,521 @@
+/* =============================================================================
+ *  components.css — 复用 UI 组件样式
+ *  依据 SPEC §3.3.5 A 全局共享组件清单
+ *    Button / Card / Form / Table / Badge (难度 + 8 态) / Tag / Toast / Loading / Empty
+ *
+ *  所有组件类均以 BEM 命名（block__element--modifier），不依赖任何 JS
+ * ============================================================================= */
+
+/* =============================================================================
+ *  Button —— 主 / 次 / 幽灵 / 危险 4 档
+ * ============================================================================= */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    height: 36px;
+    padding: 0 var(--sp-4);
+    border-radius: var(--r-md);
+    font-size: var(--fs-md);
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    background: var(--bg-2);
+    color: var(--fg-0);
+    transition:
+        background var(--t-fast) var(--ease-out),
+        border-color var(--t-fast) var(--ease-out),
+        color var(--t-fast) var(--ease-out),
+        transform var(--t-fast) var(--ease-out);
+}
+
+.btn:hover  { background: var(--bg-3); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled,
+.btn[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn--primary {
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+.btn--primary:hover  { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn--primary:active { background: var(--accent-active); border-color: var(--accent-active); }
+
+.btn--secondary {
+    background: var(--bg-2);
+    border-color: var(--border-strong);
+    color: var(--fg-0);
+}
+.btn--secondary:hover { background: var(--bg-3); }
+
+.btn--ghost {
+    background: transparent;
+    color: var(--fg-1);
+}
+.btn--ghost:hover { background: var(--bg-2); color: var(--fg-0); }
+
+.btn--danger {
+    background: transparent;
+    border-color: var(--err);
+    color: var(--err);
+}
+.btn--danger:hover { background: rgba(239, 68, 68, 0.10); }
+
+.btn--sm { height: 28px; padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.btn--lg { height: 44px; padding: 0 var(--sp-5); font-size: var(--fs-lg); }
+.btn--block { width: 100%; }
+
+/* =============================================================================
+ *  Card
+ * ============================================================================= */
+.card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: var(--sp-5);
+    transition:
+        border-color var(--t-fast) var(--ease-out),
+        transform var(--t-fast) var(--ease-out),
+        box-shadow var(--t-fast) var(--ease-out);
+}
+
+.card--hover:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-1px);
+    box-shadow: var(--sh-2);
+}
+
+.card--flat { box-shadow: none; }
+
+.card__title {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    color: var(--fg-0);
+    margin-bottom: var(--sp-2);
+}
+
+.card__desc {
+    color: var(--fg-2);
+    font-size: var(--fs-sm);
+    line-height: var(--lh-base);
+}
+
+/* =============================================================================
+ *  Form
+ * ============================================================================= */
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-4);
+}
+
+.form-label {
+    font-size: var(--fs-sm);
+    color: var(--fg-1);
+    font-weight: 500;
+}
+
+.form-label__required {
+    color: var(--err);
+    margin-left: 2px;
+}
+
+.form-input,
+.form-textarea,
+.form-select {
+    width: 100%;
+    height: 38px;
+    padding: 0 var(--sp-3);
+    background: var(--bg-input);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    color: var(--fg-0);
+    font-size: var(--fs-md);
+    transition:
+        border-color var(--t-fast) var(--ease-out),
+        box-shadow   var(--t-fast) var(--ease-out);
+}
+
+.form-textarea {
+    height: auto;
+    min-height: 96px;
+    padding: var(--sp-3);
+    line-height: var(--lh-base);
+    resize: vertical;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+    color: var(--fg-3);
+}
+
+.form-input:hover,
+.form-textarea:hover,
+.form-select:hover {
+    border-color: var(--fg-3);
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.form-input[aria-invalid="true"],
+.form-textarea[aria-invalid="true"] {
+    border-color: var(--err);
+}
+
+.form-hint {
+    color: var(--fg-2);
+    font-size: var(--fs-xs);
+}
+
+.form-error {
+    color: var(--err);
+    font-size: var(--fs-xs);
+}
+
+.form-checkbox,
+.form-radio {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* =============================================================================
+ *  Table
+ * ============================================================================= */
+.table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+}
+
+.table th,
+.table td {
+    padding: var(--sp-3) var(--sp-4);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
+}
+
+.table th {
+    background: var(--bg-1);
+    color: var(--fg-2);
+    font-weight: 500;
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.table tbody tr {
+    transition: background var(--t-fast) var(--ease-out);
+}
+
+.table tbody tr:hover {
+    background: var(--bg-3);
+}
+
+.table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* =============================================================================
+ *  Badge —— 基础款 + 难度 + 8 态判题结果
+ *  SPEC §3.3.5 J 颜色映射
+ * ============================================================================= */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--r-sm);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    line-height: 1;
+    background: var(--bg-3);
+    color: var(--fg-1);
+    border: 1px solid transparent;
+}
+
+.badge--easy   { background: rgba(74, 222, 128, 0.12); color: var(--diff-easy); }
+.badge--medium { background: rgba(251, 146, 60, 0.12); color: var(--diff-medium); }
+.badge--hard   { background: rgba(239, 68, 68, 0.12);  color: var(--diff-hard); }
+
+/* 8 态判题徽章（SPEC §3.3.5 J） */
+.badge--AC  { background: rgba(74, 222, 128, 0.12); color: var(--st-ac);  }
+.badge--WA  { background: rgba(248, 113, 113, 0.12); color: var(--st-wa); }
+.badge--TLE { background: rgba(250, 204, 21, 0.14); color: var(--st-tle); }
+.badge--MLE { background: rgba(251, 146, 60, 0.14); color: var(--st-mle); }
+.badge--OLE { background: rgba(192, 132, 252, 0.14); color: var(--st-ole); }
+.badge--RE  { background: rgba(239, 68, 68, 0.14);  color: var(--st-re); }
+.badge--CE  { background: rgba(156, 163, 175, 0.14); color: var(--st-ce); }
+.badge--SE  { background: rgba(107, 114, 128, 0.18); color: var(--st-se); }
+
+/* 提交进行中状态 */
+.badge--queued    { background: rgba(56, 189, 248, 0.14); color: var(--info); }
+.badge--compiling { background: rgba(56, 189, 248, 0.14); color: var(--info); }
+.badge--running   { background: rgba(56, 189, 248, 0.14); color: var(--info); }
+
+/* =============================================================================
+ *  Tag Chip —— 题目标签（SPEC §2.2.1 预置 8 个）
+ * ============================================================================= */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-pill);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    color: var(--fg-1);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    transition: all var(--t-fast) var(--ease-out);
+}
+
+.tag:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.tag--active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* =============================================================================
+ *  Toast —— 右上角浮窗，3s 自动消失
+ *  SPEC §3.3.5 A
+ * ============================================================================= */
+.toast-container {
+    position: fixed;
+    top: calc(var(--header-h) + var(--sp-3));
+    right: var(--sp-5);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    pointer-events: none;
+}
+
+.toast {
+    min-width: 240px;
+    max-width: 360px;
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r-md);
+    color: var(--fg-0);
+    box-shadow: var(--sh-2);
+    pointer-events: auto;
+    animation: toast-in var(--t-base) var(--ease-out);
+}
+
+.toast--success { border-left-color: var(--ok); }
+.toast--error   { border-left-color: var(--err); }
+.toast--warn    { border-left-color: var(--warn); }
+.toast--info    { border-left-color: var(--accent); }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* =============================================================================
+ *  Banner —— 顶部错误条（HTTP 5xx / 业务错误用）
+ *  SPEC §3.3.5 B
+ * ============================================================================= */
+.banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+    font-size: var(--fs-sm);
+    margin-bottom: var(--sp-4);
+}
+
+.banner--error {
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.40);
+    color: #fecaca;
+}
+
+/* =============================================================================
+ *  Spinner / Loading
+ * ============================================================================= */
+.spinner {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--bg-3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spinner-rot 0.8s linear infinite;
+}
+
+.spinner--lg { width: 40px; height: 40px; border-width: 3px; }
+
+@keyframes spinner-rot {
+    to { transform: rotate(360deg); }
+}
+
+.loading-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-3);
+    padding: var(--sp-7) 0;
+    color: var(--fg-2);
+}
+
+/* =============================================================================
+ *  Empty State
+ * ============================================================================= */
+.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-3);
+    padding: var(--sp-7) var(--sp-5);
+    text-align: center;
+    color: var(--fg-2);
+}
+
+.empty__icon {
+    font-size: 40px;
+    opacity: 0.6;
+}
+
+.empty__title {
+    color: var(--fg-1);
+    font-size: var(--fs-lg);
+    font-weight: 500;
+}
+
+.empty__hint {
+    color: var(--fg-3);
+    font-size: var(--fs-sm);
+}
+
+/* =============================================================================
+ *  Pagination
+ * ============================================================================= */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-1);
+    margin-top: var(--sp-5);
+    flex-wrap: wrap;
+}
+
+.pagination__info {
+    color: var(--fg-2);
+    font-size: var(--fs-sm);
+    margin-right: var(--sp-3);
+}
+
+.pagination button {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--fg-1);
+    font-size: var(--fs-sm);
+}
+
+.pagination button:hover:not(:disabled) {
+    background: var(--bg-3);
+    color: var(--fg-0);
+}
+
+.pagination button.is-active {
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    font-weight: 600;
+}
+
+.pagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* =============================================================================
+ *  Hero / Section —— 首页与通用区块
+ * ============================================================================= */
+.hero {
+    padding: var(--sp-7) 0 var(--sp-6);
+    text-align: center;
+}
+
+.hero__title {
+    font-size: var(--fs-4xl);
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--fg-0) 0%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    letter-spacing: -0.5px;
+}
+
+.hero__subtitle {
+    margin-top: var(--sp-3);
+    color: var(--fg-2);
+    font-size: var(--fs-lg);
+}
+
+.hero__actions {
+    margin-top: var(--sp-5);
+    display: flex;
+    gap: var(--sp-3);
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.section {
+    margin: var(--sp-6) 0;
+}
+
+.section__title {
+    font-size: var(--fs-xl);
+    margin-bottom: var(--sp-4);
+}
+
+/* 3 列特性卡栅格 */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sp-4);
+}
+
+@media (max-width: 768px) {
+    .feature-grid { grid-template-columns: 1fr; }
+    .hero__title  { font-size: var(--fs-3xl); }
+}

@@ -1,0 +1,345 @@
+/* =============================================================================
+ *  base.css — 设计令牌 + 现代重置 + 排版
+ *  依据 SPEC §1.2 / §3.3.5：仅深色主题
+ *
+ *  本文件只放：
+ *    1) :root 上的 CSS 变量（颜色、间距、圆角、字体、阴影、布局尺寸）
+ *    2) 极简 reset（box-sizing / margin / 字体继承）
+ *    3) 排版基线（body / h1-h6 / a / code）
+ *    4) 滚动条 / 选区 / 焦点环 / 通用工具类
+ *  业务组件样式放 components.css；应用壳布局放 layout.css
+ * ============================================================================= */
+
+:root {
+    color-scheme: dark;
+
+    /* ---------- 表面 / 背景 ---------- */
+    --bg-0:  #0b1220;            /* 页面底色 */
+    --bg-1:  #111a2e;            /* header / footer */
+    --bg-2:  #1a2540;            /* 卡片 */
+    --bg-3:  #243153;            /* hover */
+    --bg-4:  #2e3d63;            /* active / selected */
+    --bg-input: #0e1729;         /* 输入控件底色 */
+
+    /* ---------- 文字 ---------- */
+    --fg-0:  #f1f5f9;            /* 主文字 */
+    --fg-1:  #cbd5e1;            /* 次文字 */
+    --fg-2:  #94a3b8;            /* 辅助 */
+    --fg-3:  #64748b;            /* 禁用 / placeholder */
+    --fg-on-accent: #082f49;     /* accent 按钮上的文字色 */
+
+    /* ---------- 强调色（链接 / 主按钮） ---------- */
+    --accent:        #38bdf8;    /* sky-400 */
+    --accent-hover:  #0ea5e9;    /* sky-500 */
+    --accent-active: #0284c7;    /* sky-600 */
+    --accent-soft:   rgba(56, 189, 248, 0.12);
+
+    /* ---------- 通用语义色 ---------- */
+    --ok:    #4ade80;
+    --err:   #ef4444;
+    --warn:  #facc15;
+    --info:  #38bdf8;
+
+    /* ---------- 难度徽章（SPEC §3.3.5 A） ---------- */
+    --diff-easy:   #4ade80;
+    --diff-medium: #fb923c;
+    --diff-hard:   #ef4444;
+
+    /* ---------- 8 态判题徽章（SPEC §3.3.5 J） ---------- */
+    --st-ac:  #4ade80;
+    --st-wa:  #f87171;
+    --st-tle: #facc15;
+    --st-mle: #fb923c;
+    --st-ole: #c084fc;
+    --st-re:  #ef4444;
+    --st-ce:  #9ca3af;
+    --st-se:  #6b7280;
+
+    /* ---------- 边框 / 分隔 ---------- */
+    --border:        #1e293b;
+    --border-strong: #334155;
+    --divider:       #1e293b;
+
+    /* ---------- 间距尺度（4 的倍数） ---------- */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 24px;
+    --sp-6: 32px;
+    --sp-7: 48px;
+    --sp-8: 64px;
+
+    /* ---------- 圆角 ---------- */
+    --r-sm:   4px;
+    --r-md:   8px;
+    --r-lg:   12px;
+    --r-xl:   16px;
+    --r-pill: 999px;
+
+    /* ---------- 字体 ---------- */
+    --font-sans:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono:
+        ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+
+    --fs-xs:  12px;
+    --fs-sm:  13px;
+    --fs-md:  14px;
+    --fs-lg:  16px;
+    --fs-xl:  20px;
+    --fs-2xl: 24px;
+    --fs-3xl: 32px;
+    --fs-4xl: 40px;
+
+    --lh-tight: 1.25;
+    --lh-base:  1.55;
+    --lh-loose: 1.75;
+
+    /* ---------- 阴影 ---------- */
+    --sh-1: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --sh-2: 0 4px 12px rgba(0, 0, 0, 0.35);
+    --sh-3: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+    /* ---------- 应用壳尺寸（layout.css 引用） ---------- */
+    --header-h:        56px;
+    --footer-h:        48px;
+    --container-w:     1200px;
+    --container-w-narrow: 720px;
+
+    /* ---------- 动效 ---------- */
+    --t-fast:   120ms;
+    --t-base:   200ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* =============================================================================
+ *  Reset —— 极简版，遵循 Josh Comeau / Andy Bell 思路
+ * ============================================================================= */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-size: var(--fs-md);
+    line-height: var(--lh-base);
+    color: var(--fg-1);
+    background-color: var(--bg-0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+img,
+picture,
+video,
+canvas,
+svg {
+    display: block;
+    max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color var(--t-fast) var(--ease-out);
+}
+
+a:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+}
+
+ul,
+ol {
+    list-style: none;
+}
+
+/* =============================================================================
+ *  排版基线
+ * ============================================================================= */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--fg-0);
+    font-weight: 600;
+    line-height: var(--lh-tight);
+}
+
+h1 { font-size: var(--fs-3xl); }
+h2 { font-size: var(--fs-2xl); }
+h3 { font-size: var(--fs-xl); }
+h4 { font-size: var(--fs-lg); }
+
+p {
+    color: var(--fg-1);
+}
+
+code,
+kbd,
+samp,
+pre {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+}
+
+code {
+    background: var(--bg-2);
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    color: var(--fg-0);
+}
+
+pre {
+    background: var(--bg-input);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    line-height: var(--lh-base);
+}
+
+pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--divider);
+    margin: var(--sp-5) 0;
+}
+
+::selection {
+    background: var(--accent-soft);
+    color: var(--fg-0);
+}
+
+/* =============================================================================
+ *  滚动条 —— Webkit / Firefox
+ * ============================================================================= */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-3) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--bg-3);
+    border-radius: var(--r-pill);
+    border: 2px solid var(--bg-0);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--bg-4);
+}
+
+/* =============================================================================
+ *  通用工具类
+ * ============================================================================= */
+.container {
+    width: 100%;
+    max-width: var(--container-w);
+    margin: 0 auto;
+    padding: 0 var(--sp-5);
+}
+
+.container--narrow {
+    max-width: var(--container-w-narrow);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.muted { color: var(--fg-2); }
+.dim   { color: var(--fg-3); }
+
+.text-center { text-align: center; }
+.text-right  { text-align: right; }
+
+.mt-1 { margin-top: var(--sp-1); }
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mt-5 { margin-top: var(--sp-5); }
+.mt-6 { margin-top: var(--sp-6); }
+
+.mb-1 { margin-bottom: var(--sp-1); }
+.mb-2 { margin-bottom: var(--sp-2); }
+.mb-3 { margin-bottom: var(--sp-3); }
+.mb-4 { margin-bottom: var(--sp-4); }
+.mb-5 { margin-bottom: var(--sp-5); }
+.mb-6 { margin-bottom: var(--sp-6); }
+
+/* 当用户在系统层面偏好降低动效时 */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        transition-duration: 0.001ms !important;
+        animation-duration: 0.001ms !important;
+    }
+}
