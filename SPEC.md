@@ -1235,7 +1235,7 @@ open http://localhost
 - [x] Docker Compose 一键启动验证（详见 §9.5 / Phase 1 验收报告 `docs/phase1-verification.md`）
 
 ### Phases 2 - 账户系统
-- [ ] users 表 / Argon2 密码哈希
+- [x] users 表 / Argon2 密码哈希（详见 §9.6 / `docs/phase2-verification.md`）
 - [ ] `/api/auth/register` 实现首注册为 admin 逻辑
 - [ ] `/api/auth/login` + JWT 颁发
 - [ ] `/api/auth/refresh` + Refresh Cookie + 静默刷新
@@ -1376,6 +1376,41 @@ open http://localhost
    影响文件：`backend/Dockerfile`。
 
 **结论**：Phase 1 基础骨架通过验收，进入 Phase 2（账户系统）开发。
+
+---
+
+### 9.6 Phase 2 — users 表 / Argon2 密码哈希（已通过）
+> 触发条件：SPEC §8 TODO「Phases 2 - 账户系统」第 1 项已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与修复记录见
+> [`docs/phase2-verification.md`](docs/phase2-verification.md)。
+
+**验证时间**：2026-06-16
+**验证环境**：Linux x86_64 / GCC 13.3 / Debian 12 (bookworm) / libargon2-dev 0~20190702
+
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 2-1a | `users` 表 schema 与 §4.2 完全一致 | `001_init.sql:16-27` 字段 / 类型 / 约束 / 字符集 / 引擎 / 幂等全部对齐 | ✅ |
+| 2-1b | `PasswordHasher` API（hash/verify/is_encoded_hash）可用 | `infra/password_hasher.{hpp,cpp}` + 25 项单元测试 | ✅ |
+| 2-1c | 输出 PHC 编码 `$argon2id$v=19$m=...,t=...,p=...$salt$hash` | `HashEmitsPhcEncodedArgon2id` 测试 + smoke 输出 | ✅ |
+| 2-1d | 同密码两次 hash 输出不同（盐随机性） | `SamePasswordProducesDifferentHashes` 跑 8 次两两不等 | ✅ |
+| 2-1e | encoded 长度 ≤ 255（兼容 VARCHAR(255)） | 实测 97 B，`EncodedLengthFitsVarchar255` 5 轮验证 | ✅ |
+| 2-1f | verify 篡改 / 异常 / 空 / 过大输入均安全返 false（noexcept） | 6 项 `VerifyRejects*` 测试覆盖 | ✅ |
+| 2-1g | 构造期参数 fail-fast | 3 项 `ConstructorRejects*` 测试 | ✅ |
+| 2-1h | 60 项单元测试全过 | `./build/oj_unit_tests` PASSED 60/60 | ✅ |
+| 2-1i | SPEC §9.3 S-2 密码 Argon2id 存储 / 不可逆 | 全部子项满足（见 phase2-verification §6） | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `backend/include/infra/password_hasher.hpp` | 新增 | `PasswordHasher` 类 + `HashError` + `Params` |
+| `backend/src/infra/password_hasher.cpp` | 新增 | libargon2 + OpenSSL `RAND_bytes` 实现 |
+| `backend/tests/test_auth.cpp` | 新增 | 25 项 GoogleTest |
+| `docs/phase2-verification.md` | 新增 | 本次验收报告 |
+
+**结论**：Phase 2 第 1 项交付完成，进入第 2 项 `/api/auth/register` 实现首注册为 admin 逻辑。
 
 ---
 
