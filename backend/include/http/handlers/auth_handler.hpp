@@ -2,8 +2,9 @@
 
 // =============================================================================
 //  oj::http::handlers::auth — 注册 / 登录 / 刷新 HTTP 入口
-//  本阶段实现 POST /api/auth/register + POST /api/auth/login；
-//  refresh / logout 留作后续 Phase 2 子项。
+//  本阶段实现 POST /api/auth/register + POST /api/auth/login +
+//                   POST /api/auth/refresh；
+//  logout / me / password 留作后续 Phase 2 子项。
 //
 //  handler 全部以 free function 形式暴露（与 health_handler 风格一致），
 //  由 main.cpp 注入 AuthService 共享指针 + DB readiness 检查回调。

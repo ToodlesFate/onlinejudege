@@ -1,6 +1,9 @@
 #include "infra/jwt_service.hpp"
 
 #include <chrono>
+#include <cstdint>
+#include <random>
+#include <sstream>
 #include <utility>
 
 #include <jwt-cpp/jwt.h>
@@ -17,6 +20,18 @@ constexpr std::string_view kRefreshType = "refresh";
 std::int64_t to_unix(std::chrono::system_clock::time_point tp) {
     return std::chrono::duration_cast<std::chrono::seconds>(
         tp.time_since_epoch()).count();
+}
+
+// 生成 128-bit 随机 token id —— 每次 issue 都新生成，让 token 真正"轮换"
+// （JWT iat 是秒级粒度，同一秒内签两次 token 内容会完全相同；加 jti 后
+// 即使 iat 相同 payload 也不同，refresh 才能产生不同 token）
+std::string new_jti() {
+    static thread_local std::mt19937_64 rng{std::random_device{}()};
+    std::uint64_t a = rng();
+    std::uint64_t b = rng();
+    std::ostringstream oss;
+    oss << std::hex << a << b;
+    return oss.str();
 }
 
 // 包装 int64_t 为 picojson::value —— 用赋值 + 局部变量避免
@@ -48,6 +63,7 @@ std::string JwtService::issue_access(std::int64_t user_id, bool is_admin) const 
     return jwt::create()
         .set_type("JWT")
         .set_issuer(cfg_.issuer)
+        .set_id(new_jti())  // 唯一 token id，让每次签发都有不同的 payload
         .set_issued_at(now)
         .set_expires_at(now + std::chrono::seconds(cfg_.access_ttl_sec))
         .set_payload_claim("uid", jwt::claim(value_of_int64(user_id)))
@@ -61,6 +77,7 @@ std::string JwtService::issue_refresh(std::int64_t user_id) const {
     return jwt::create()
         .set_type("JWT")
         .set_issuer(cfg_.issuer)
+        .set_id(new_jti())  // 唯一 token id，refresh 才能真正"轮换"
         .set_issued_at(now)
         .set_expires_at(now + std::chrono::seconds(cfg_.refresh_ttl_sec))
         .set_payload_claim("uid", jwt::claim(value_of_int64(user_id)))
@@ -95,6 +112,9 @@ TokenClaims JwtService::verify(std::string_view token,
         }
         if (decoded.has_expires_at()) {
             c.expires_at_unix = to_unix(decoded.get_expires_at());
+        }
+        if (decoded.has_id()) {
+            c.jti = decoded.get_id();
         }
 
         if (c.type != expected_type) {

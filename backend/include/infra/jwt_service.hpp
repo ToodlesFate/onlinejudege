@@ -40,6 +40,7 @@ struct TokenClaims {
     std::string  type;        // "access" / "refresh"
     std::int64_t issued_at_unix{0};
     std::int64_t expires_at_unix{0};
+    std::string  jti;         // 唯一 token id（每次 issue 都新生成）—— 便于"轮换"语义
 };
 
 class JwtService {

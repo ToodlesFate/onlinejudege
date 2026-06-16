@@ -3,7 +3,7 @@
 // =============================================================================
 //  oj::domain::AuthService — 注册 / 登录 / 刷新领域逻辑
 //  SPEC §2.1 / §3.2.2 "AuthService"
-//  本阶段实现 register() + login()；refresh() 留作后续 Phase 2 子项。
+//  本阶段实现 register() + login() + refresh_access()。
 //
 //  设计要点：
 //    1. 构造时注入 IUserRepository + PasswordHasher + JwtService —— 全部
@@ -76,6 +76,29 @@ struct LoginResult {
     bool         is_admin{false};
 };
 
+// 静默刷新流程的细分类 —— SPEC §2.1
+enum class RefreshErrorKind {
+    BadRequest,    // → 1001  (refresh_token 字符串为空)
+    Unauthorized,  // → 1002  (签名错 / 过期 / type 不匹配 / 用户已不存在)
+    Internal,      // → 1007
+};
+
+class RefreshError : public std::runtime_error {
+public:
+    RefreshError(RefreshErrorKind k, std::string msg)
+        : std::runtime_error(std::move(msg)), kind_(k) {}
+    [[nodiscard]] RefreshErrorKind kind() const noexcept { return kind_; }
+private:
+    RefreshErrorKind kind_;
+};
+
+struct RefreshResult {
+    std::int64_t user_id{};
+    std::string  access_token;
+    std::string  refresh_token;  // 轮换后的新 refresh（handler 写入 Set-Cookie）
+    bool         is_admin{false};
+};
+
 class AuthService {
 public:
     AuthService(std::shared_ptr<IUserRepository> users,
@@ -97,6 +120,15 @@ public:
     //                      避免泄露用户名是否存在
     [[nodiscard]] LoginResult login_user(std::string_view username,
                                         std::string_view password);
+
+    // 静默刷新流程（SPEC §2.1）：
+    //   1) 用 JwtService::verify 校验 refresh_token 签名/issuer/exp/type=refresh
+    //   2) 按 uid 重新查询 user —— 拿到**当前** is_admin（admin 角色可能已被调整）
+    //   3) 颁发新的 access token；轮换 refresh token（每次刷新返回新的 refresh，
+    //      原 refresh 在 v1 阶段无黑名单，靠 JWT exp 自然过期；后续若引入黑名单
+    //      只需在这里追加 revoke 旧 refresh 的步骤）
+    //   失败抛 RefreshError
+    [[nodiscard]] RefreshResult refresh_access(std::string_view refresh_token);
 
     // 暴露给 handler 用来把 Refresh Token 写入 Set-Cookie 时附带 Max-Age
     [[nodiscard]] int refresh_ttl_sec() const noexcept {

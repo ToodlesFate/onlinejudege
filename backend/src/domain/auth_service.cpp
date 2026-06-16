@@ -186,4 +186,51 @@ LoginResult AuthService::login_user(std::string_view username,
     return r;
 }
 
+RefreshResult AuthService::refresh_access(std::string_view refresh_token) {
+    // 1) 空串直接拒绝 —— Cookie 被清空 / 客户端误传空值时走 BadRequest
+    if (refresh_token.empty()) {
+        throw RefreshError(RefreshErrorKind::BadRequest, "refresh_token is empty");
+    }
+
+    // 2) 校验 JWT：签名 / issuer / exp / type=refresh  —— JwtService::verify
+    //    失败统一抛 InvalidToken，这里统一翻译为 Unauthorized。
+    //    不区分"过期 vs 篡改 vs type 错"，对外都是 1002 即可（细节不暴露）。
+    oj::infra::TokenClaims claims;
+    try {
+        claims = jwt_->verify(refresh_token, "refresh");
+    } catch (const oj::infra::InvalidToken& e) {
+        spdlog::info("AuthService: refresh rejected (invalid token): {}", e.what());
+        throw RefreshError(RefreshErrorKind::Unauthorized, "invalid refresh token");
+    } catch (const std::exception& e) {
+        spdlog::error("AuthService: refresh jwt.verify unexpected: {}", e.what());
+        throw RefreshError(RefreshErrorKind::Internal, "internal error");
+    }
+
+    // 3) 重新查 user —— SPEC §2.1 要求新 access 反映**当前** is_admin
+    //    （admin 角色可能已被调整；同时确认用户未被删除）
+    oj::domain::User u;
+    try {
+        auto found = users_->find_by_id(claims.user_id);
+        if (!found.has_value()) {
+            spdlog::info("AuthService: refresh rejected (user not found) uid={}",
+                         claims.user_id);
+            throw RefreshError(RefreshErrorKind::Unauthorized, "invalid refresh token");
+        }
+        u = *found;
+    } catch (const RefreshError&) {
+        throw;
+    } catch (const std::exception& e) {
+        spdlog::error("AuthService: refresh DB lookup error: {}", e.what());
+        throw RefreshError(RefreshErrorKind::Internal, "internal error");
+    }
+
+    // 4) 颁发新 access + 轮换 refresh
+    RefreshResult r;
+    r.user_id       = u.id;
+    r.is_admin      = u.is_admin;
+    r.access_token  = jwt_->issue_access(u.id, u.is_admin);
+    r.refresh_token = jwt_->issue_refresh(u.id);
+    return r;
+}
+
 }  // namespace oj::domain

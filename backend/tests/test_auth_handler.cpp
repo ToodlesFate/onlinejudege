@@ -72,6 +72,15 @@ public:
         return std::nullopt;
     }
     std::size_t size() const { std::lock_guard<std::mutex> lk(mu_); return users_.size(); }
+
+    // 仅供测试：按 id 抹掉一个 user（用来验证 "refresh 有效但 user 已删" 分支）
+    // 不暴露在 IUserRepository 接口里 —— 业务上 v1 不支持删 user
+    void remove_for_test(std::int64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto it = users_.begin(); it != users_.end(); ++it) {
+            if (it->id == id) { users_.erase(it); return; }
+        }
+    }
 private:
     mutable std::mutex mu_;
     std::vector<User>  users_;
@@ -579,6 +588,256 @@ TEST(AuthLoginHandlerTest, GetOnLoginPathReturns404) {
     b.server->start();
     auto res = make_client(19122).Get("/api/auth/login");
     if (!res) GTEST_SKIP() << "port 19122 not reachable in this environment";
+    EXPECT_EQ(res->status, 404);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1004);
+}
+
+// ===========================================================================
+//  POST /api/auth/refresh  ——  SPEC §2.1 + §5.2.1
+//  鉴权：Cookie: refresh_token=<jwt>
+//  resp：{"code":0,"message":"ok","data":{"access_token"}}
+//  header：Set-Cookie: refresh_token=<轮换后新值>; HttpOnly; ...
+// ===========================================================================
+
+struct RefreshBundle {
+    std::unique_ptr<ScopedServer>      server;
+    std::shared_ptr<InMemoryUserRepo>  repo;
+    std::shared_ptr<AuthService>       auth;
+    std::shared_ptr<JwtService>         jwt;
+    std::shared_ptr<std::atomic<bool>> db_ready{std::make_shared<std::atomic<bool>>(true)};
+
+    oj::domain::RegisterResult         reg;  // 已注册用户的 token 对
+};
+
+RefreshBundle make_refresh_server(uint16_t port) {
+    RefreshBundle b;
+    b.repo = std::make_shared<InMemoryUserRepo>();
+    auto h = std::make_shared<PasswordHasher>();
+    b.jwt  = std::make_shared<JwtService>(make_jwt_cfg());
+    b.auth = std::make_shared<AuthService>(b.repo, h, b.jwt);
+    b.server = std::make_unique<ScopedServer>(port);
+    auto ready_ptr = b.db_ready;
+    oj::http::handlers::register_auth_routes(
+        b.server->server(), b.auth,
+        [ready_ptr] { return ready_ptr->load(std::memory_order_acquire); });
+    // 先注册一个用户拿到合法 refresh
+    b.reg = b.auth->register_user("alice", "alice@x.com", "password123");
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+//  Happy path
+// ---------------------------------------------------------------------------
+TEST(AuthRefreshHandlerTest, ValidRefreshReturnsNewAccessToken) {
+    RefreshBundle b = make_refresh_server(19200);
+    b.server->start();
+
+    httplib::Headers headers = {
+        {"Cookie", "refresh_token=" + b.reg.refresh_token},
+    };
+    auto res = make_client(19200).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19200 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 0);
+    ASSERT_TRUE(j["data"].is_object());
+    EXPECT_FALSE(j["data"]["access_token"].get<std::string>().empty());
+    EXPECT_NE(j["data"]["access_token"].get<std::string>(), b.reg.access_token)
+        << "new access token must differ from old (new iat/exp)";
+}
+
+TEST(AuthRefreshHandlerTest, RefreshRotatesRefreshTokenCookie) {
+    RefreshBundle b = make_refresh_server(19201);
+    b.server->start();
+
+    httplib::Headers headers = {
+        {"Cookie", "refresh_token=" + b.reg.refresh_token},
+    };
+    auto res = make_client(19201).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19201 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+
+    const std::string set_cookie = res->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("refresh_token="), std::string::npos);
+    EXPECT_NE(set_cookie.find("HttpOnly"),       std::string::npos);
+    EXPECT_NE(set_cookie.find("Path=/api/auth"), std::string::npos);
+    EXPECT_NE(set_cookie.find("SameSite=Lax"),   std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=86400"),  std::string::npos);
+    // 新 Set-Cookie 必须**不**再含旧 refresh —— 轮换意味着新值 ≠ 旧值
+    EXPECT_EQ(set_cookie.find(b.reg.refresh_token), std::string::npos)
+        << "Set-Cookie should contain a NEW refresh token, not the old one";
+}
+
+TEST(AuthRefreshHandlerTest, RefreshResponseBodyOnlyContainsAccessToken) {
+    // SPEC §5.2.1：data = {access_token}；refresh 不入 body
+    RefreshBundle b = make_refresh_server(19202);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + b.reg.refresh_token}};
+    auto res = make_client(19202).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19202 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"].count("refresh_token"), 0u);
+    EXPECT_EQ(j["data"].count("user_id"),       0u);
+    EXPECT_EQ(j["data"].count("is_admin"),      0u);
+    EXPECT_EQ(j["data"].count("access_token"),  1u);
+}
+
+TEST(AuthRefreshHandlerTest, RefreshIssuedAccessTokenIsValidJwt) {
+    RefreshBundle b = make_refresh_server(19203);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + b.reg.refresh_token}};
+    auto res = make_client(19203).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19203 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    const std::string access = j["data"]["access_token"].get<std::string>();
+    int dots = 0;
+    for (char c : access) if (c == '.') ++dots;
+    EXPECT_EQ(dots, 2);
+    auto claims = b.jwt->verify(access, "access");
+    EXPECT_EQ(claims.user_id,  b.reg.user_id);
+    EXPECT_EQ(claims.is_admin, b.reg.is_admin);
+}
+
+TEST(AuthRefreshHandlerTest, RefreshSurvivesWhenCookieHasExtraFields) {
+    // 真实浏览器发 Cookie 时可能带其他字段（其他 cookie / 顺序无关）
+    RefreshBundle b = make_refresh_server(19204);
+    b.server->start();
+    const std::string cookie =
+        "session=abc; refresh_token=" + b.reg.refresh_token + "; theme=dark";
+    httplib::Headers headers = {{"Cookie", cookie}};
+    auto res = make_client(19204).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19204 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_FALSE(j["data"]["access_token"].get<std::string>().empty());
+}
+
+// ---------------------------------------------------------------------------
+//  错误路径：cookie 缺失 / token 坏 / token 签名错
+// ---------------------------------------------------------------------------
+TEST(AuthRefreshHandlerTest, NoCookieReturns400) {
+    RefreshBundle b = make_refresh_server(19205);
+    b.server->start();
+    auto res = make_client(19205).Post("/api/auth/refresh", "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19205 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+    EXPECT_NE(std::string{j["message"]}.find("refresh_token"), std::string::npos);
+}
+
+TEST(AuthRefreshHandlerTest, CookieWithoutRefreshTokenFieldReturns400) {
+    // 有 Cookie 头但没有 refresh_token 字段
+    RefreshBundle b = make_refresh_server(19206);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "session=abc; theme=dark"}};
+    auto res = make_client(19206).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19206 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST(AuthRefreshHandlerTest, EmptyRefreshTokenValueReturns400) {
+    RefreshBundle b = make_refresh_server(19207);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token="}};
+    auto res = make_client(19207).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19207 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(AuthRefreshHandlerTest, MalformedRefreshTokenReturns401) {
+    RefreshBundle b = make_refresh_server(19208);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=not.a.jwt"}};
+    auto res = make_client(19208).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19208 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+}
+
+TEST(AuthRefreshHandlerTest, AccessTokenAsRefreshReturns401) {
+    // 把 access token 当 refresh 用 → type 不匹配 → 401
+    RefreshBundle b = make_refresh_server(19209);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + b.reg.access_token}};
+    auto res = make_client(19209).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19209 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+}
+
+TEST(AuthRefreshHandlerTest, TokenSignedWithDifferentSecretReturns401) {
+    RefreshBundle b = make_refresh_server(19210);
+    JwtConfig bad = make_jwt_cfg();
+    bad.secret    = "a-different-32-byte-secret-pad-pad";
+    JwtService bad_jwt{bad};
+    const auto fake = bad_jwt.issue_refresh(b.reg.user_id);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + fake}};
+    auto res = make_client(19210).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19210 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+}
+
+TEST(AuthRefreshHandlerTest, FailureClearsTheRefreshCookie) {
+    // 401 时 handler 主动 Set-Cookie: refresh_token=; Max-Age=0 把客户端的
+    // 旧 refresh 清掉，避免坏 token 残留在浏览器里
+    RefreshBundle b = make_refresh_server(19211);
+    b.server->start();
+    httplib::Headers headers = {{"Cookie", "refresh_token=garbage"}};
+    auto res = make_client(19211).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19211 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    const std::string set_cookie = res->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("refresh_token="), std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=0"),      std::string::npos);
+}
+
+TEST(AuthRefreshHandlerTest, RefreshUserVanishedReturns401) {
+    // user 在 repo 中被抹除 → refresh 失败
+    RefreshBundle b = make_refresh_server(19212);
+    b.server->start();
+    b.repo->remove_for_test(b.reg.user_id);
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + b.reg.refresh_token}};
+    auto res = make_client(19212).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19212 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+}
+
+// ---------------------------------------------------------------------------
+//  DB 不可用
+// ---------------------------------------------------------------------------
+TEST(AuthRefreshHandlerTest, DbDownReturnsEnvelope) {
+    RefreshBundle b = make_refresh_server(19213);
+    b.server->start();
+    b.db_ready->store(false, std::memory_order_release);
+    httplib::Headers headers = {{"Cookie", "refresh_token=" + b.reg.refresh_token}};
+    auto res = make_client(19213).Post("/api/auth/refresh", headers, "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19213 not reachable in this environment";
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+}
+
+// ---------------------------------------------------------------------------
+//  错误方法
+// ---------------------------------------------------------------------------
+TEST(AuthRefreshHandlerTest, GetOnRefreshPathReturns404) {
+    RefreshBundle b = make_refresh_server(19214);
+    b.server->start();
+    auto res = make_client(19214).Get("/api/auth/refresh");
+    if (!res) GTEST_SKIP() << "port 19214 not reachable in this environment";
     EXPECT_EQ(res->status, 404);
     auto j = nlohmann::json::parse(res->body);
     EXPECT_EQ(j["code"].get<int>(), 1004);

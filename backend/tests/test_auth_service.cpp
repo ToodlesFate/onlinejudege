@@ -29,6 +29,8 @@ using oj::domain::AuthService;
 using oj::domain::IUserRepository;
 using oj::domain::LoginError;
 using oj::domain::LoginErrorKind;
+using oj::domain::RefreshError;
+using oj::domain::RefreshErrorKind;
 using oj::domain::RegisterError;
 using oj::domain::RegisterErrorKind;
 using oj::domain::User;
@@ -81,6 +83,15 @@ public:
     std::size_t size() const {
         std::lock_guard<std::mutex> lk(mu_);
         return users_.size();
+    }
+
+    // 仅供测试：按 id 抹掉一个 user（用来验证 "refresh 有效但 user 已删" 分支）
+    // 不暴露在 IUserRepository 接口里 —— 业务上 v1 不支持删 user
+    void remove_for_test(std::int64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto it = users_.begin(); it != users_.end(); ++it) {
+            if (it->id == id) { users_.erase(it); return; }
+        }
     }
 
 private:
@@ -492,6 +503,190 @@ TEST(AuthServiceLoginTest, LoginIsCaseSensitive) {
     LoginFixture f;
     EXPECT_THROW(f.svc->login_user("ALICE", "password123"), LoginError);
     EXPECT_NO_THROW (f.svc->login_user("alice", "password123"));
+}
+
+// ===========================================================================
+//  refresh_access()  ——  SPEC §2.1 POST /api/auth/refresh
+// ===========================================================================
+
+// 准备一个含一个用户的 service；外加一个独立的 jwt（用于伪造 token）
+struct RefreshFixture {
+    std::shared_ptr<InMemoryUserRepo> repo = std::make_shared<InMemoryUserRepo>();
+    std::shared_ptr<JwtService>       jwt = std::make_shared<JwtService>(make_jwt_cfg());
+    std::shared_ptr<AuthService>      svc;
+    oj::domain::RegisterResult        reg;
+    RefreshFixture() {
+        auto h = std::make_shared<PasswordHasher>();
+        svc = std::make_shared<AuthService>(repo, h, jwt);
+        reg = svc->register_user("alice", "alice@x.com", "password123");
+    }
+};
+
+// ---------------------------------------------------------------------------
+//  输入校验
+// ---------------------------------------------------------------------------
+TEST(AuthServiceRefreshTest, RejectsEmptyToken) {
+    RefreshFixture f;
+    try {
+        f.svc->refresh_access("");
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::BadRequest);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  token 本身无效 —— 签名错 / 篡改 / type 错 / 过期 → 统一 Unauthorized
+// ---------------------------------------------------------------------------
+TEST(AuthServiceRefreshTest, RejectsMalformedToken) {
+    RefreshFixture f;
+    try {
+        f.svc->refresh_access("not.a.real.jwt");
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::Unauthorized);
+    }
+}
+
+TEST(AuthServiceRefreshTest, RejectsAccessTokenAsRefresh) {
+    // 用 access token 当 refresh —— type 不匹配
+    RefreshFixture f;
+    auto access = f.jwt->issue_access(1, true);
+    try {
+        f.svc->refresh_access(access);
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::Unauthorized);
+    }
+}
+
+TEST(AuthServiceRefreshTest, RejectsTokenSignedWithDifferentSecret) {
+    RefreshFixture f;
+    JwtConfig bad = make_jwt_cfg();
+    bad.secret    = "a-different-32-byte-secret-pad-pad";
+    JwtService bad_jwt{bad};
+    const auto fake_refresh = bad_jwt.issue_refresh(1);
+    try {
+        f.svc->refresh_access(fake_refresh);
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::Unauthorized);
+    }
+}
+
+TEST(AuthServiceRefreshTest, RejectsExpiredToken) {
+    JwtConfig short_cfg = make_jwt_cfg();
+    short_cfg.refresh_ttl_sec = 1;  // 1s 过期
+    auto short_jwt = std::make_shared<JwtService>(short_cfg);
+    auto repo  = std::make_shared<InMemoryUserRepo>();
+    auto hasher = std::make_shared<PasswordHasher>();
+    auto svc   = std::make_shared<AuthService>(repo, hasher, short_jwt);
+    auto reg   = svc->register_user("alice", "a@x.com", "password123");
+
+    // 睡到 leeway(5s) 之外
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    try {
+        svc->refresh_access(reg.refresh_token);
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::Unauthorized);
+    }
+}
+
+TEST(AuthServiceRefreshTest, RejectsTokenWhoseUserWasDeleted) {
+    // "refresh 有效但 DB 里 user 没了"分支：抹掉 repo 里的 user 后再用其
+    // 旧 refresh 调 service，必须拒绝并返回 1002。
+    RefreshFixture f;
+    auto t = f.reg.refresh_token;
+    f.repo->remove_for_test(f.reg.user_id);
+    try {
+        f.svc->refresh_access(t);
+        FAIL() << "expected RefreshError";
+    } catch (const RefreshError& e) {
+        EXPECT_EQ(e.kind(), RefreshErrorKind::Unauthorized);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Happy path
+// ---------------------------------------------------------------------------
+TEST(AuthServiceRefreshTest, ValidRefreshReturnsNewAccessAndNewRefresh) {
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    EXPECT_EQ(r.user_id, f.reg.user_id);
+    EXPECT_EQ(r.is_admin, f.reg.is_admin);
+    EXPECT_FALSE(r.access_token.empty());
+    EXPECT_FALSE(r.refresh_token.empty());
+}
+
+TEST(AuthServiceRefreshTest, RefreshTokenIsRotated) {
+    // SPEC §2.1：静默刷新会轮换 refresh token
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    EXPECT_NE(r.refresh_token, f.reg.refresh_token)
+        << "refresh token must be rotated on each refresh";
+    EXPECT_NE(r.access_token, f.reg.access_token)
+        << "access token must be different (new iat/exp)";
+}
+
+TEST(AuthServiceRefreshTest, OldRefreshTokenIsStillValidInV1NoBlacklist) {
+    // v1 没有 refresh 黑名单 —— 旧 refresh 验证仍通过（靠 exp 自然过期）
+    // 这是已知行为；后续接黑名单后此测试需更新。
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    auto jwt2 = std::make_shared<JwtService>(make_jwt_cfg());
+    EXPECT_NO_THROW(jwt2->verify(r.refresh_token, "refresh"));
+    // 旧 refresh 也能 verify 通过（说明它本身仍是合法 JWT）
+    EXPECT_NO_THROW(jwt2->verify(f.reg.refresh_token, "refresh"));
+}
+
+TEST(AuthServiceRefreshTest, RefreshedAccessTokenHasCurrentIsAdminClaim) {
+    // 新 access token 的 adm claim 必须反映**当前** repo 里的 is_admin
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    auto claims = f.jwt->verify(r.access_token, "access");
+    EXPECT_EQ(claims.is_admin, f.reg.is_admin);
+}
+
+TEST(AuthServiceRefreshTest, RefreshIssuedAccessTokenVerifiesAsAccessType) {
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    auto claims = f.jwt->verify(r.access_token, "access");
+    EXPECT_EQ(claims.user_id, r.user_id);
+    EXPECT_EQ(claims.type,    "access");
+}
+
+TEST(AuthServiceRefreshTest, RefreshIssuedRefreshTokenVerifiesAsRefreshType) {
+    RefreshFixture f;
+    auto r = f.svc->refresh_access(f.reg.refresh_token);
+    auto claims = f.jwt->verify(r.refresh_token, "refresh");
+    EXPECT_EQ(claims.user_id, r.user_id);
+    EXPECT_EQ(claims.type,    "refresh");
+    EXPECT_FALSE(claims.is_admin);  // refresh 不带 adm
+}
+
+TEST(AuthServiceRefreshTest, RefreshIsAdminFlagMatchesCurrentRepo) {
+    // 第二个 user 走 refresh：is_admin 仍是 false
+    auto repo  = std::make_shared<InMemoryUserRepo>();
+    auto hasher = std::make_shared<PasswordHasher>();
+    auto jwt   = std::make_shared<JwtService>(make_jwt_cfg());
+    auto svc   = std::make_shared<AuthService>(repo, hasher, jwt);
+    svc->register_user("alice", "a@x.com", "password123");  // admin
+    auto bob = svc->register_user("bob", "b@x.com", "password456");  // 非 admin
+    auto r = svc->refresh_access(bob.refresh_token);
+    EXPECT_FALSE(r.is_admin);
+    EXPECT_EQ(r.user_id, bob.user_id);
+}
+
+TEST(AuthServiceRefreshTest, ChainOfRefreshesAllStayValid) {
+    // 连续多次 refresh 出来的 token 仍可继续 refresh
+    RefreshFixture f;
+    auto t = f.reg.refresh_token;
+    for (int i = 0; i < 3; ++i) {
+        auto r = f.svc->refresh_access(t);
+        t = r.refresh_token;
+        EXPECT_FALSE(r.access_token.empty());
+    }
 }
 
 }  // namespace
