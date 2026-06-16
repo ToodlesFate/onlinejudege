@@ -1239,7 +1239,7 @@ open http://localhost
 - [x] `/api/auth/register` 实现首注册为 admin 逻辑（详见 §9.7 / `docs/phase3-verification.md`）
 - [x] `/api/auth/login` + JWT 颁发
 - [x] `/api/auth/refresh` + Refresh Cookie + 静默刷新
-- [ ] 前端：登录/注册页 + Token 存储 + API 客户端
+- [x] 前端：登录/注册页 + Token 存储 + API 客户端
 
 ### Phases 3 - 题目模块
 - [ ] problems / testcases / tags 表 + Repo

@@ -519,3 +519,174 @@
     .feature-grid { grid-template-columns: 1fr; }
     .hero__title  { font-size: var(--fs-3xl); }
 }
+
+/* =============================================================================
+ *  Auth Card —— 登录 / 注册 居中卡片 (SPEC §3.3.5 E / F)
+ * ============================================================================= */
+.auth-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: var(--sp-6) 0 var(--sp-7);
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: var(--sp-6);
+    box-shadow: var(--sh-2);
+}
+
+.auth-card__title {
+    font-size: var(--fs-2xl);
+    font-weight: 600;
+    margin-bottom: var(--sp-2);
+    color: var(--fg-0);
+}
+
+.auth-card__subtitle {
+    margin-bottom: var(--sp-5);
+    font-size: var(--fs-sm);
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;  /* form-group 自带 margin-bottom:16px */
+}
+
+.auth-form__error {
+    margin-bottom: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.30);
+    border-radius: var(--r-md);
+    color: #fecaca;
+    display: none;
+}
+
+.auth-form__error:not(:empty) {
+    display: block;
+}
+
+.auth-form .btn--block {
+    margin-top: var(--sp-2);
+    height: 40px;
+}
+
+.auth-card__foot {
+    margin-top: var(--sp-5);
+    text-align: center;
+    font-size: var(--fs-sm);
+}
+
+.auth-card__foot a {
+    margin-left: var(--sp-1);
+}
+
+/* =============================================================================
+ *  User Menu —— 顶部右侧已登录下拉
+ * ============================================================================= */
+.user-menu {
+    position: relative;
+}
+
+.user-menu__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    height: 32px;
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-md);
+    color: var(--fg-1);
+    font-size: var(--fs-md);
+    transition:
+        background var(--t-fast) var(--ease-out),
+        color var(--t-fast) var(--ease-out);
+}
+
+.user-menu__trigger:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+}
+
+.user-menu__avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+}
+
+.user-menu__caret {
+    font-size: var(--fs-xs);
+    opacity: 0.7;
+}
+
+.user-menu__dropdown {
+    position: absolute;
+    top: calc(100% + var(--sp-2));
+    right: 0;
+    min-width: 160px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--sh-2);
+    padding: var(--sp-1);
+    display: none;
+    z-index: 50;
+}
+
+.user-menu__dropdown.is-open {
+    display: block;
+}
+
+.user-menu__item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-sm);
+    color: var(--fg-0);
+    font-size: var(--fs-sm);
+    text-align: left;
+    background: transparent;
+    cursor: pointer;
+    transition: background var(--t-fast) var(--ease-out);
+}
+
+.user-menu__item:hover {
+    background: var(--bg-3);
+    text-decoration: none;
+    color: var(--fg-0);
+}
+
+.user-menu__item--danger {
+    color: var(--err);
+}
+
+.user-menu__item--danger:hover {
+    background: rgba(239, 68, 68, 0.10);
+    color: var(--err);
+}
+
+.user-menu__sep {
+    border: none;
+    border-top: 1px solid var(--divider);
+    margin: var(--sp-1) 0;
+}
+
+/* 窄屏隐藏 username 文字，只留头像 + caret */
+@media (max-width: 640px) {
+    .user-menu__trigger > span:not(.user-menu__avatar):not(.user-menu__caret) {
+        display: none;
+    }
+}

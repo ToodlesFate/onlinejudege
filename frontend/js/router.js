@@ -8,10 +8,12 @@
 //    - 视图签名：async (params, query) => HTMLElement | { mount, unmount? }
 //
 //  使用：
-//    import { createRouter } from './router.js';
+//    import { createRouter, navigate } from './router.js';
 //    const router = createRouter({ mount: '#view-root' });
 //    router.add({ path: '/', view: homeView });
 //    router.start();
+//    // 模块外的代码也可直接用顶级 navigate（会转发到当前 router）
+//    navigate('/login');
 // =============================================================================
 
 /**
@@ -28,6 +30,24 @@
  * @property {Route['view']}     [notFound] 未匹配时使用的视图
  * @property {(route: {path:string, params:Record<string,string>, query:URLSearchParams}) => void} [onChange]
  */
+
+// ---------------------------------------------------------------------------
+//  顶层 navigate —— 让模块外的代码（header / main / 视图内）能直接调用
+//  设计：内部维护当前 router 的 navigate 实现；createRouter 启动时通过
+//  _internal.setNavigate 注入。无 router 时降级为 location.assign
+// ---------------------------------------------------------------------------
+let _navigateImpl = (path, opts) => {
+    if (typeof window !== 'undefined') window.location.assign(path);
+    else throw new Error('[navigate] no router registered and no window');
+};
+
+export const _internal = {
+    setNavigate(fn) { _navigateImpl = fn; },
+};
+
+export function navigate(path, opts = {}) {
+    _navigateImpl(path, opts);
+}
 
 /**
  * @param {RouterOptions} opts
@@ -172,13 +192,16 @@ export function createRouter(opts) {
         return r;
     }
 
-    function navigate(path, { replace = false } = {}) {
+    function navigateInner(path, { replace = false } = {}) {
         if (replace) {
             history.replaceState({}, '', path);
         } else {
             render(path);
         }
     }
+
+    // 把自己注册为顶层 navigate 的实现
+    _internal.setNavigate(navigateInner);
 
     function start() {
         if (started) return;
@@ -189,5 +212,5 @@ export function createRouter(opts) {
         render(location.pathname + location.search, { replace: true });
     }
 
-    return { add, navigate, start, match, routes };
+    return { add, navigate: navigateInner, start, match, routes };
 }
