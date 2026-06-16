@@ -68,7 +68,7 @@ cmake --build build
 
 #### 离线 / 内网构建（可选）
 
-默认 CMake 会通过 FetchContent 从 GitHub 拉 `cpp-httplib` / `spdlog` / `jwt-cpp` / `doctest` / `nlohmann_json`。
+默认 CMake 会通过 FetchContent 从 GitHub 拉 `cpp-httplib` / `spdlog` / `jwt-cpp` / `googletest` / `nlohmann_json`。
 如果在内网或断网环境，把这些源码 clone 到 `backend/.local-deps/` 下，CMake 会自动走本地路径、不再访问外网：
 
 ```bash
@@ -78,7 +78,7 @@ for repo in \
   "https://github.com/yhirose/cpp-httplib.git|v0.15.3|cpp-httplib" \
   "https://github.com/gabime/spdlog.git|v1.13.0|spdlog" \
   "https://github.com/Thalhammer/jwt-cpp.git|v0.7.0|jwt-cpp" \
-  "https://github.com/doctest/doctest.git|v2.4.11|doctest" \
+  "https://github.com/google/googletest.git|v1.15.2|googletest" \
   "https://github.com/nlohmann/json.git|v3.11.3|json"; do
   IFS='|' read -r url tag dir <<< "$repo"
   git clone --depth=1 --branch "$tag" "$url" "$dir"

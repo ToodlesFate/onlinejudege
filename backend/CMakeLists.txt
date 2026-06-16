@@ -1,9 +1,9 @@
 # =============================================================================
 #  OnlineJudge Backend — 顶层 CMakeLists
 #  依据 SPEC §3.2.1：Http / Domain / Infra / Common 四层；include 与 src 镜像
-#  编译目标：
+# 编译目标：
 #    - oj_backend        ：主服务可执行文件
-#    - oj_unit_tests     ：单元测试（doctest）— 仅 BUILD_TESTING=ON 时构建
+#    - oj_unit_tests     ：单元测试（GoogleTest）— 仅 BUILD_TESTING=ON 时构建
 # =============================================================================
 cmake_minimum_required(VERSION 3.20)
 project(onlinejudge_backend
@@ -44,11 +44,11 @@ else()
 endif()
 
 if(DEFINED OJ_LOCAL_DEPS_DIR AND IS_DIRECTORY "${OJ_LOCAL_DEPS_DIR}")
-    set(OJ_DEPS_JSON_SRC   "${OJ_LOCAL_DEPS_DIR}/json")
-    set(OJ_DEPS_HTTP_SRC   "${OJ_LOCAL_DEPS_DIR}/cpp-httplib")
-    set(OJ_DEPS_JWT_SRC    "${OJ_LOCAL_DEPS_DIR}/jwt-cpp")
-    set(OJ_DEPS_SPDLOG_SRC "${OJ_LOCAL_DEPS_DIR}/spdlog")
-    set(OJ_DEPS_DOCTEST_SRC "${OJ_LOCAL_DEPS_DIR}/doctest")
+    set(OJ_DEPS_JSON_SRC    "${OJ_LOCAL_DEPS_DIR}/json")
+    set(OJ_DEPS_HTTP_SRC    "${OJ_LOCAL_DEPS_DIR}/cpp-httplib")
+    set(OJ_DEPS_JWT_SRC     "${OJ_LOCAL_DEPS_DIR}/jwt-cpp")
+    set(OJ_DEPS_SPDLOG_SRC  "${OJ_LOCAL_DEPS_DIR}/spdlog")
+    set(OJ_DEPS_GTEST_SRC   "${OJ_LOCAL_DEPS_DIR}/googletest")
 
     if(EXISTS "${OJ_DEPS_JSON_SRC}/single_include/nlohmann/json.hpp")
         add_library(oj_nlohmann_json INTERFACE)
@@ -84,17 +84,28 @@ if(DEFINED OJ_LOCAL_DEPS_DIR AND IS_DIRECTORY "${OJ_LOCAL_DEPS_DIR}")
         message(FATAL_ERROR "spdlog not found under ${OJ_DEPS_SPDLOG_SRC}")
     endif()
 
-    if(EXISTS "${OJ_DEPS_DOCTEST_SRC}/doctest/doctest.h")
-        add_library(oj_doctest INTERFACE)
-        target_include_directories(oj_doctest INTERFACE "${OJ_DEPS_DOCTEST_SRC}")
-        add_library(doctest::doctest ALIAS oj_doctest)
+    # 即使在 local-deps 模式下也优先复用系统 GTest；找不到时才用本地源码。
+    # 这样保留内网离线构建能力的同时，宿主机若已 apt 装过 libgtest-dev 就直接命中。
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        message(STATUS "OJ backend: using system GTest ${GTest_VERSION} (overriding local)")
+    elseif(EXISTS "${OJ_DEPS_GTEST_SRC}/CMakeLists.txt")
+        set(BUILD_GMOCK     OFF CACHE INTERNAL "")
+        set(INSTALL_GTEST   OFF CACHE INTERNAL "")
+        add_subdirectory("${OJ_DEPS_GTEST_SRC}" googletest-build EXCLUDE_FROM_ALL)
     else()
-        message(FATAL_ERROR "doctest not found under ${OJ_DEPS_DOCTEST_SRC}")
+        message(FATAL_ERROR "googletest not found under ${OJ_DEPS_GTEST_SRC} and no system GTest")
     endif()
 
     message(STATUS "OJ backend: using local deps at ${OJ_LOCAL_DEPS_DIR}")
 else()
-    include(${CMAKE_SOURCE_DIR}/cmake/deps.cmake)   # FetchContent：nlohmann_json / cpp_httplib / jwt_cpp / spdlog / doctest
+    # 优先复用系统已安装的 GTest；找不到时由 deps.cmake 的 FetchContent 兜底。
+    # 其他依赖（nlohmann_json / cpp_httplib / jwt_cpp / spdlog）始终通过 deps.cmake 拉取。
+    find_package(GTest QUIET)
+    if(GTest_FOUND)
+        message(STATUS "OJ backend: using system GTest ${GTest_VERSION}")
+    endif()
+    include(${CMAKE_SOURCE_DIR}/cmake/deps.cmake)
 endif()
 
 # ---- 全局编译选项 -----------------------------------------------------------
@@ -183,7 +194,7 @@ target_compile_definitions(oj_backend PRIVATE
     OJ_VERSION_PATCH=${PROJECT_VERSION_PATCH}
 )
 
-# ---- 单元测试（doctest） — 默认开启 ----------------------------------------
+# ---- 单元测试（GoogleTest） — 默认开启 --------------------------------------
 option(OJ_BUILD_TESTS "Build backend unit tests" ON)
 if(OJ_BUILD_TESTS)
     enable_testing()
@@ -196,7 +207,13 @@ if(OJ_BUILD_TESTS)
         PRIVATE
             oj_core
             oj_warnings
-            doctest::doctest
+            GTest::gtest
+            GTest::gtest_main
+    )
+
+    # gtest 默认会在测试用例之间产生大量 Info 级日志；只让 WARNING/ERROR 上抛
+    target_compile_definitions(oj_unit_tests PRIVATE
+        GTEST_HAS_PTHREAD=1
     )
 
     add_test(NAME oj_unit_tests COMMAND oj_unit_tests)

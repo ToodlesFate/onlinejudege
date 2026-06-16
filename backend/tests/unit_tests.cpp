@@ -1,12 +1,12 @@
 // =============================================================================
-//  oj_unit_tests — 阶段 1 单元测试
+//  oj_unit_tests — 阶段 1 单元测试（GoogleTest）
 //    - Response envelope 形状
 //    - Config 解析（默认值 / 覆盖 / 错误格式）
 //    - /api/health handler 返回正确 JSON
+//    - HttpServer 端到端冒烟
 // =============================================================================
 
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include <doctest/doctest.h>
+#include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
@@ -50,108 +50,126 @@ private:
 
 }  // namespace
 
-TEST_CASE("error_code mapping is stable") {
+// ---------------------------------------------------------------------------
+//  ErrorCode
+// ---------------------------------------------------------------------------
+TEST(ErrorCodeTest, MappingIsStable) {
     using oj::common::ErrorCode;
-    CHECK(static_cast<std::int32_t>(ErrorCode::Ok) == 0);
-    CHECK(static_cast<std::int32_t>(ErrorCode::BadRequest) == 1001);
-    CHECK(static_cast<std::int32_t>(ErrorCode::Unauthorized) == 1002);
-    CHECK(static_cast<std::int32_t>(ErrorCode::Forbidden) == 1003);
-    CHECK(static_cast<std::int32_t>(ErrorCode::NotFound) == 1004);
-    CHECK(static_cast<std::int32_t>(ErrorCode::Conflict) == 1005);
-    CHECK(static_cast<std::int32_t>(ErrorCode::TooLarge) == 1006);
-    CHECK(static_cast<std::int32_t>(ErrorCode::Internal) == 1007);
-    CHECK(static_cast<std::int32_t>(ErrorCode::SystemError) == 1008);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::Ok),          0);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::BadRequest),  1001);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::Unauthorized),1002);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::Forbidden),   1003);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::NotFound),    1004);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::Conflict),    1005);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::TooLarge),    1006);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::Internal),    1007);
+    EXPECT_EQ(static_cast<std::int32_t>(ErrorCode::SystemError), 1008);
 
-    CHECK(oj::common::to_http_status(ErrorCode::Ok) == 200);
-    CHECK(oj::common::to_http_status(ErrorCode::BadRequest) == 400);
-    CHECK(oj::common::to_http_status(ErrorCode::Unauthorized) == 401);
-    CHECK(oj::common::to_http_status(ErrorCode::Forbidden) == 403);
-    CHECK(oj::common::to_http_status(ErrorCode::NotFound) == 404);
-    CHECK(oj::common::to_http_status(ErrorCode::Conflict) == 409);
-    CHECK(oj::common::to_http_status(ErrorCode::TooLarge) == 413);
-    CHECK(oj::common::to_http_status(ErrorCode::Internal) == 500);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::Ok),          200);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::BadRequest),  400);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::Unauthorized),401);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::Forbidden),   403);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::NotFound),    404);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::Conflict),    409);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::TooLarge),    413);
+    EXPECT_EQ(oj::common::to_http_status(ErrorCode::Internal),    500);
 }
 
-TEST_CASE("Response::ok builds the SPEC §5.1 envelope") {
+// ---------------------------------------------------------------------------
+//  Response envelope
+// ---------------------------------------------------------------------------
+TEST(ResponseTest, OkBuildsEnvelope) {
     auto j = oj::common::Response::ok(nlohmann::json{{"answer", 42}});
-    CHECK(j["code"] == 0);
-    CHECK(j["message"] == "ok");
-    REQUIRE(j["data"].is_object());
-    CHECK(j["data"]["answer"] == 42);
+    EXPECT_EQ(j["code"].get<int>(),                  0);
+    EXPECT_EQ(j["message"].get<std::string>(),       "ok");
+    ASSERT_TRUE(j["data"].is_object());
+    EXPECT_EQ(j["data"]["answer"].get<int>(),        42);
 }
 
-TEST_CASE("Response::error defaults message from code") {
+TEST(ResponseTest, ErrorDefaultsMessageFromCode) {
     auto j = oj::common::Response::error(oj::common::ErrorCode::BadRequest);
-    CHECK(j["code"] == 1001);
-    CHECK(j["message"] == "bad request");
-    CHECK(j["data"].is_null());
+    EXPECT_EQ(j["code"].get<int>(),            1001);
+    EXPECT_EQ(j["message"].get<std::string>(), "bad request");
+    EXPECT_TRUE(j["data"].is_null());
 }
 
-TEST_CASE("Response::error accepts override message") {
-    auto j = oj::common::Response::error(oj::common::ErrorCode::BadRequest, "username too short");
-    CHECK(j["code"] == 1001);
-    CHECK(j["message"] == "username too short");
+TEST(ResponseTest, ErrorAcceptsOverrideMessage) {
+    auto j = oj::common::Response::error(oj::common::ErrorCode::BadRequest,
+                                         "username too short");
+    EXPECT_EQ(j["code"].get<int>(),            1001);
+    EXPECT_EQ(j["message"].get<std::string>(), "username too short");
 }
 
-TEST_CASE("AppConfig::load uses defaults when fields are missing") {
+// ---------------------------------------------------------------------------
+//  AppConfig
+// ---------------------------------------------------------------------------
+TEST(AppConfigTest, LoadUsesDefaultsWhenFieldsMissing) {
     TempConfigFile f("{}");
     auto cfg = oj::common::AppConfig::load(f.path());
-    CHECK(cfg.server.host == "0.0.0.0");
-    CHECK(cfg.server.port == 8080);
-    CHECK(cfg.server.thread_pool_size == 8);
-    CHECK(cfg.log.level == "info");
+    EXPECT_EQ(cfg.server.host,             "0.0.0.0");
+    EXPECT_EQ(cfg.server.port,             8080);
+    EXPECT_EQ(cfg.server.thread_pool_size, 8);
+    EXPECT_EQ(cfg.log.level,               "info");
 }
 
-TEST_CASE("AppConfig::load honors overrides") {
+TEST(AppConfigTest, LoadHonorsOverrides) {
     TempConfigFile f(R"({
         "server": {"host": "127.0.0.1", "port": 9000, "thread_pool_size": 2},
         "log":    {"level": "debug", "stdout": false, "dir": "/tmp/oj-test"}
     })");
     auto cfg = oj::common::AppConfig::load(f.path());
-    CHECK(cfg.server.host == "127.0.0.1");
-    CHECK(cfg.server.port == 9000);
-    CHECK(cfg.server.thread_pool_size == 2);
-    CHECK(cfg.log.level == "debug");
-    CHECK(cfg.log.stdout_console == false);
-    CHECK(cfg.log.dir == std::filesystem::path{"/tmp/oj-test"});
+    EXPECT_EQ(cfg.server.host,             "127.0.0.1");
+    EXPECT_EQ(cfg.server.port,             9000);
+    EXPECT_EQ(cfg.server.thread_pool_size, 2);
+    EXPECT_EQ(cfg.log.level,               "debug");
+    EXPECT_FALSE(cfg.log.stdout_console);
+    EXPECT_EQ(cfg.log.dir,                 std::filesystem::path{"/tmp/oj-test"});
 }
 
-TEST_CASE("AppConfig::load rejects malformed json") {
+TEST(AppConfigTest, LoadRejectsMalformedJson) {
     TempConfigFile f("{not json");
-    CHECK_THROWS_AS(oj::common::AppConfig::load(f.path()), oj::common::ConfigError);
+    EXPECT_THROW(oj::common::AppConfig::load(f.path()), oj::common::ConfigError);
 }
 
-TEST_CASE("/api/health returns 200 envelope with status=ok") {
+// ---------------------------------------------------------------------------
+//  /api/health handler
+// ---------------------------------------------------------------------------
+TEST(HealthHandlerTest, Returns200Envelope) {
     httplib::Request  req;
     httplib::Response res;
     oj::http::handlers::health(req, res, /*uptime_ms=*/123);
 
-    CHECK(res.status == 200);
-    CHECK(res.get_header_value("Content-Type") == "application/json; charset=utf-8");
+    EXPECT_EQ(res.status, 200);
+    EXPECT_EQ(res.get_header_value("Content-Type"), "application/json; charset=utf-8");
 
     auto body = nlohmann::json::parse(res.body);
-    CHECK(body["code"] == 0);
-    CHECK(body["message"] == "ok");
-    REQUIRE(body["data"].is_object());
-    CHECK(body["data"]["status"] == "ok");
-    CHECK(body["data"]["version"] == OJ_VERSION_STRING);
-    CHECK(body["data"]["uptime_ms"] == 123);
-    CHECK(body["data"].contains("now_unix"));
-    CHECK(body["data"]["now_unix"].get<std::int64_t>() > 0);
+    EXPECT_EQ(body["code"].get<int>(),            0);
+    EXPECT_EQ(body["message"].get<std::string>(), "ok");
+    ASSERT_TRUE(body["data"].is_object());
+    EXPECT_EQ(body["data"]["status"].get<std::string>(), "ok");
+    EXPECT_EQ(body["data"]["version"].get<std::string>(), OJ_VERSION_STRING);
+    EXPECT_EQ(body["data"]["uptime_ms"].get<int>(),       123);
+    ASSERT_TRUE(body["data"].contains("now_unix"));
+    EXPECT_GT(body["data"]["now_unix"].get<std::int64_t>(), 0);
 }
 
-TEST_CASE("write_error serializes ErrorCode → HTTP status + envelope") {
+// ---------------------------------------------------------------------------
+//  http::write_error
+// ---------------------------------------------------------------------------
+TEST(HttpHelpersTest, WriteErrorSerializes) {
     httplib::Response res;
     oj::http::write_error(res, oj::common::ErrorCode::Unauthorized, "missing token");
-    CHECK(res.status == 401);
+    EXPECT_EQ(res.status, 401);
     auto body = nlohmann::json::parse(res.body);
-    CHECK(body["code"] == 1002);
-    CHECK(body["message"] == "missing token");
-    CHECK(body["data"].is_null());
+    EXPECT_EQ(body["code"].get<int>(),            1002);
+    EXPECT_EQ(body["message"].get<std::string>(), "missing token");
+    EXPECT_TRUE(body["data"].is_null());
 }
 
-TEST_CASE("HttpServer end-to-end: GET /api/health on ephemeral port") {
-    // 端到端：起一个真 HttpServer 在后台线程 → httplib::Client 拉 /api/health
+// ---------------------------------------------------------------------------
+//  HttpServer 端到端
+// ---------------------------------------------------------------------------
+TEST(HttpServerE2ETest, GetHealthOnLocalPort) {
     oj::common::AppConfig cfg;
     cfg.server.host = "127.0.0.1";
     cfg.server.port = 18080;                // 固定本地端口；CI 上保持独占
@@ -170,7 +188,7 @@ TEST_CASE("HttpServer end-to-end: GET /api/health on ephemeral port") {
         srv.listen();
     });
 
-    // 等到 /api/health 200 就算通过；超时 3s 跳过（CI 环境端口可能冲突）
+    // 等 listen 真正进入 accept 循环
     for (int i = 0; i < 300 && !ready.load(std::memory_order_acquire); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -185,12 +203,12 @@ TEST_CASE("HttpServer end-to-end: GET /api/health on ephemeral port") {
     if (t.joinable()) t.join();
 
     if (!res) {
-        WARN("skipping live e2e: port 18080 not reachable in this environment");
-        return;
+        GTEST_SKIP() << "skipping live e2e: port 18080 not reachable in this environment";
     }
-    CHECK(res->status == 200);
+
+    EXPECT_EQ(res->status, 200);
     auto body = nlohmann::json::parse(res->body);
-    CHECK(body["code"] == 0);
-    CHECK(body["data"]["status"] == "ok");
-    CHECK(body["data"]["version"] == OJ_VERSION_STRING);
+    EXPECT_EQ(body["code"].get<int>(),                          0);
+    EXPECT_EQ(body["data"]["status"].get<std::string>(),       "ok");
+    EXPECT_EQ(body["data"]["version"].get<std::string>(),      OJ_VERSION_STRING);
 }

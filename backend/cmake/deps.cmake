@@ -58,13 +58,18 @@ set(SPDLOG_INSTALL         OFF CACHE INTERNAL "")
 set(SPDLOG_FMT_EXTERNAL    OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(spdlog)
 
-# ---- doctest (unit test framework) -----------------------------------------
-FetchContent_Declare(
-  doctest
-  GIT_REPOSITORY https://github.com/doctest/doctest.git
-  GIT_TAG        v2.4.11
-  GIT_SHALLOW    TRUE
-)
-set(DOCTEST_WITH_TESTS     OFF CACHE INTERNAL "")
-set(DOCTEST_WITH_MAIN_IN_STATIC_LIB OFF CACHE INTERNAL "")
-FetchContent_MakeAvailable(doctest)
+# ---- googletest (unit test framework) --------------------------------------
+# 仅在系统未提供 GTest 时通过 FetchContent 拉取；
+# 若顶层 CMakeLists.txt 已通过 find_package(GTest) 命中 GTest_FOUND，跳过此处。
+if(NOT GTest_FOUND)
+    FetchContent_Declare(
+      googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG        v1.15.2
+      GIT_SHALLOW    TRUE
+    )
+    # 关闭 googletest 自带的 install / examples / tests，缩短构建时间
+    set(BUILD_GMOCK               OFF CACHE INTERNAL "")
+    set(INSTALL_GTEST             OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(googletest)
+endif()

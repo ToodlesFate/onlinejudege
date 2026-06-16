@@ -81,7 +81,7 @@ a.md
 backend/.local-deps/cpp-httplib/
 backend/.local-deps/spdlog/
 backend/.local-deps/jwt-cpp/
-backend/.local-deps/doctest/
+backend/.local-deps/googletest/
 backend/.local-deps/json/
 # Generic fallback so a future dep doesn't accidentally get committed
 backend/.local-deps/*/

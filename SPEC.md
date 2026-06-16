@@ -307,7 +307,7 @@ backend/
 ├── sql/
 │   ├── 001_init.sql             # 建表
 │   └── 002_seed.sql             # 预置 8 个标签
-├── tests/                       # 单元测试（doctest）
+├── tests/                       # 单元测试（GoogleTest）
 └── config/
     └── default.json             # 端口、数据库、判题线程数等
 ```
@@ -1093,7 +1093,7 @@ onlinejudge/
 │   │   ├── 001_init.sql             ← 7 张表 DDL
 │   │   └── 002_seed.sql             ← 预置 8 个标签
 │   │
-│   ├── tests/                       ← 单元测试（doctest）
+│   ├── tests/                       ← 单元测试（GoogleTest）
 │   │   ├── test_auth.cpp            ← AuthService / JwtService / PasswordHasher
 │   │   ├── test_problem.cpp         ← ProblemService / ProblemRepo
 │   │   ├── test_submission.cpp      ← SubmissionService
@@ -1269,7 +1269,7 @@ open http://localhost
 ### Phases 7 - 打磨与验收
 - [ ] spdlog 接入 + access log
 - [ ] 统一错误中间件
-- [ ] 单元测试（doctest）：Auth / Problem / Judge 关键路径
+- [ ] 单元测试（GoogleTest）：Auth / Problem / Judge 关键路径
 - [ ] README：本地开发 + 部署文档
 - [ ] 端到端验证：按 9 章验收清单全过
 
