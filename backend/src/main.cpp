@@ -1,0 +1,194 @@
+// =============================================================================
+//  oj_backend — 主入口
+//  依据 SPEC §3.2.2：仅装配 Common + Http 两层，Phase 1 仅暴露 GET /api/health
+//
+//  用法：
+//      oj_backend --config <path> [--log-dir <path>]
+//      oj_backend --print-config <path>   （调试用，dump 解析后的配置到 stdout）
+// =============================================================================
+
+#include <atomic>
+#include <csignal>
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include "common/config.hpp"
+#include "common/error_code.hpp"
+#include "common/version.hpp"
+#include "http/HttpServer.hpp"
+#include "http/handlers/health_handler.hpp"
+
+namespace {
+
+std::atomic<oj::http::HttpServer*> g_server{nullptr};
+
+void on_signal(int sig) {
+    spdlog::warn("received signal {}, shutting down", sig);
+    if (auto* s = g_server.load(); s != nullptr) {
+        s->stop();
+    }
+}
+
+void install_signal_handlers() {
+    struct sigaction sa{};
+    sa.sa_handler = on_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    // 忽略 SIGPIPE —— 客户端断开时 write 不会拖死进程
+    signal(SIGPIPE, SIG_IGN);
+}
+
+spdlog::level::level_enum parse_level(const std::string& s) {
+    using namespace spdlog::level;
+    if (s == "trace")    return trace;
+    if (s == "debug")    return debug;
+    if (s == "info")     return info;
+    if (s == "warn" || s == "warning") return warn;
+    if (s == "error" || s == "err")    return err;
+    if (s == "critical") return critical;
+    if (s == "off")      return off;
+    return info;
+}
+
+void init_logger(const oj::common::LogConfig& log) {
+    std::vector<spdlog::sink_ptr> sinks;
+
+    if (log.stdout_console) {
+        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    }
+
+    try {
+        std::filesystem::create_directories(log.dir);
+        auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            (log.dir / "oj_backend.log").string(),
+            100 * 1024 * 1024,  // 100 MB
+            10                  // 10 files
+        );
+        sinks.push_back(std::move(file));
+    } catch (const std::exception& e) {
+        std::cerr << "[warn] failed to open log file under " << log.dir
+                  << ": " << e.what() << " — falling back to stdout only\n";
+    }
+
+    auto logger = std::make_shared<spdlog::logger>("oj_backend", sinks.begin(), sinks.end());
+    logger->set_level(parse_level(log.level));
+    logger->flush_on(spdlog::level::warn);
+    spdlog::set_default_logger(logger);
+    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+}
+
+struct Args {
+    std::filesystem::path config_path{"config/default.json"};
+    std::filesystem::path log_dir_override{};
+    bool print_config{false};
+};
+
+std::string_view next_or_empty(int argc, char** argv, int& i) {
+    if (i + 1 >= argc) {
+        return {};
+    }
+    return argv[++i];
+}
+
+Args parse_args(int argc, char** argv) {
+    Args a;
+    for (int i = 1; i < argc; ++i) {
+        std::string_view cur = argv[i];
+        if (cur == "--config" || cur == "-c") {
+            auto v = next_or_empty(argc, argv, i);
+            if (v.empty()) throw std::runtime_error("--config requires a path");
+            a.config_path = std::string{v};
+        } else if (cur == "--log-dir") {
+            auto v = next_or_empty(argc, argv, i);
+            if (v.empty()) throw std::runtime_error("--log-dir requires a path");
+            a.log_dir_override = std::string{v};
+        } else if (cur == "--print-config") {
+            auto v = next_or_empty(argc, argv, i);
+            if (v.empty()) throw std::runtime_error("--print-config requires a path");
+            a.config_path = std::string{v};
+            a.print_config = true;
+        } else if (cur == "--help" || cur == "-h") {
+            std::cout << "oj_backend " << OJ_VERSION_STRING
+                      << "\n  --config <path>        config json (default: config/default.json)"
+                         "\n  --log-dir <path>       override log dir"
+                         "\n  --print-config <path>  load config and dump parsed values, then exit"
+                         "\n  --help                 show this help\n";
+            std::exit(0);
+        } else {
+            throw std::runtime_error("unknown argument: " + std::string{cur});
+        }
+    }
+    return a;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    using namespace oj;
+
+    Args args;
+    try {
+        args = parse_args(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "[fatal] " << e.what() << "\n";
+        return 2;
+    }
+
+    common::AppConfig cfg;
+    try {
+        cfg = common::AppConfig::load(args.config_path);
+    } catch (const common::ConfigError& e) {
+        std::cerr << "[fatal] config load failed: " << e.what() << "\n";
+        return 2;
+    }
+
+    if (!args.log_dir_override.empty()) {
+        cfg.log.dir = args.log_dir_override;
+    }
+
+    if (args.print_config) {
+        std::cout << "{\"server\":" << "{"
+                  << "\"host\":\"" << cfg.server.host << "\","
+                  << "\"port\":"  << cfg.server.port  << ","
+                  << "\"thread_pool_size\":" << cfg.server.thread_pool_size
+                  << "},"
+                  << "\"log\":"   << "{"
+                  << "\"level\":\"" << cfg.log.level << "\","
+                  << "\"dir\":\""   << cfg.log.dir.string() << "\","
+                  << "\"stdout\":" << (cfg.log.stdout_console ? "true" : "false")
+                  << "}}\n";
+        return 0;
+    }
+
+    init_logger(cfg.log);
+    spdlog::info("oj_backend {} starting up; config={}", OJ_VERSION_STRING, args.config_path.string());
+
+    install_signal_handlers();
+
+    http::HttpServer server(std::move(cfg));
+
+    // Phase 1 仅暴露健康检查端点
+    server.get("/api/health", [&server](const httplib::Request& req, httplib::Response& res) {
+        http::handlers::health(req, res, server.uptime_ms());
+    });
+
+    g_server.store(&server, std::memory_order_release);
+
+    std::string reason;
+    if (!server.listen(&reason)) {
+        spdlog::critical("failed to start http server: {}", reason);
+        return 1;
+    }
+    spdlog::info("oj_backend exited cleanly");
+    return 0;
+}

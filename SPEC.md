@@ -1229,7 +1229,7 @@ open http://localhost
 ### Phases 1 - 基础骨架
 - [x] 仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml
 - [x] MySQL 初始化 SQL（建表 + 8 个标签）
-- [ ] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
+- [x] C++ 后端骨架：HttpServer 启动、Health endpoint、健康检查
 - [ ] 前端骨架：单页 + History 路由 + 深色主题 base CSS
 - [ ] Docker Compose 一键启动验证
 
@@ -1272,8 +1272,6 @@ open http://localhost
 - [ ] 单元测试（doctest）：Auth / Problem / Judge 关键路径
 - [ ] README：本地开发 + 部署文档
 - [ ] 端到端验证：按 9 章验收清单全过
-
-**总计：约 27 工作日（5.5 周）**
 
 ---
 
@@ -1333,14 +1331,6 @@ open http://localhost
 - [ ] M-3：README 含本地开发 5 步指南 + 部署指南 + 常见问题
 - [ ] M-4：所有依赖通过 FetchContent 拉取，无 vcpkg / apt 依赖
 
-### 9.5 验收签字
-| 角色 | 姓名 | 日期 | 签名 |
-|---|---|---|---|
-| 产品 |  |  |  |
-| 后端 |  |  |  |
-| 前端 |  |  |  |
-| 部署 |  |  |  |
-
 ---
 
 ## 附录 A：术语表
@@ -1356,8 +1346,3 @@ open http://localhost
 | SPJ | Special Judge，自定义判题程序（v1 不实现） |
 | 沙箱 (Sandbox) | 隔离运行环境，本项目用 Docker |
 
-## 附录 B：变更记录
-
-| 版本 | 日期 | 变更内容 | 作者 |
-|---|---|---|---|
-| 1.0 | 2026-04-23 | 初稿 | Socratic 访谈产出 |

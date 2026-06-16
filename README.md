@@ -7,7 +7,7 @@
 
 ## 当前进度
 
-**Phase 1 — 基础骨架** 进行中（仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml）。
+**Phase 1 — 基础骨架** 进行中（仓库初始化、目录结构、CMakeLists、Dockerfile、docker-compose.yml、C++ 后端骨架已就绪：`/api/health` + 容器化健康检查）。
 
 ## 仓库结构
 
@@ -66,7 +66,7 @@ cmake --build build
 ./build/oj_backend --config config/default.json
 ```
 
-> 注：当前 Phase 1 的 `src/` 仅有占位骨架，`cmake --build` 会成功（产物为空 main），但 `oj_backend` 还无法真正启动服务 —— C++ 代码在后续 todo 中补全。
+> C++ 后端骨架已就绪：`oj_backend` 监听 `config/default.json:server.port`（默认 `0.0.0.0:8080`），目前只暴露 `GET /api/health`（信封格式 `{"code":0,"message":"ok","data":{...}}`）。Docker HEALTHCHECK 与 docker-compose healthcheck 都依赖它。
 
 ## 文档
 

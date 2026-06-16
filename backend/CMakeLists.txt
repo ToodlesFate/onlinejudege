@@ -33,7 +33,61 @@ pkg_check_modules(MYSQLCLIENT    REQUIRED IMPORTED_TARGET mysqlclient)
 pkg_check_modules(LIBCURL        REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(LIBARGON2      REQUIRED IMPORTED_TARGET libargon2)
 
-include(deps.cmake)   # FetchContent：nlohmann_json / cpp_httplib / jwt_cpp / spdlog / doctest
+# 允许通过 OJ_LOCAL_DEPS_DIR 指定本地已克隆的依赖目录，
+# 便于在内网/无外网环境下跳过 FetchContent 的 git clone。
+if(DEFINED OJ_LOCAL_DEPS_DIR AND IS_DIRECTORY "${OJ_LOCAL_DEPS_DIR}")
+    set(OJ_DEPS_JSON_SRC   "${OJ_LOCAL_DEPS_DIR}/json")
+    set(OJ_DEPS_HTTP_SRC   "${OJ_LOCAL_DEPS_DIR}/cpp-httplib")
+    set(OJ_DEPS_JWT_SRC    "${OJ_LOCAL_DEPS_DIR}/jwt-cpp")
+    set(OJ_DEPS_SPDLOG_SRC "${OJ_LOCAL_DEPS_DIR}/spdlog")
+    set(OJ_DEPS_DOCTEST_SRC "${OJ_LOCAL_DEPS_DIR}/doctest")
+
+    if(EXISTS "${OJ_DEPS_JSON_SRC}/single_include/nlohmann/json.hpp")
+        add_library(oj_nlohmann_json INTERFACE)
+        target_include_directories(oj_nlohmann_json INTERFACE "${OJ_DEPS_JSON_SRC}/single_include")
+        add_library(nlohmann_json::nlohmann_json ALIAS oj_nlohmann_json)
+    else()
+        message(FATAL_ERROR "nlohmann/json not found under ${OJ_DEPS_JSON_SRC}")
+    endif()
+
+    if(EXISTS "${OJ_DEPS_HTTP_SRC}/httplib.h")
+        add_library(oj_cpp_httplib INTERFACE)
+        target_include_directories(oj_cpp_httplib INTERFACE "${OJ_DEPS_HTTP_SRC}")
+        target_link_libraries(oj_cpp_httplib INTERFACE Threads::Threads)
+        add_library(cpp_httplib::cpp_httplib ALIAS oj_cpp_httplib)
+    else()
+        message(FATAL_ERROR "cpp-httplib not found under ${OJ_DEPS_HTTP_SRC}")
+    endif()
+
+    if(EXISTS "${OJ_DEPS_JWT_SRC}/include/jwt-cpp/jwt.h")
+        add_library(oj_jwt_cpp INTERFACE)
+        target_include_directories(oj_jwt_cpp INTERFACE "${OJ_DEPS_JWT_SRC}/include")
+        target_link_libraries(oj_jwt_cpp INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+        add_library(jwt-cpp::jwt-cpp ALIAS oj_jwt_cpp)
+    else()
+        message(FATAL_ERROR "jwt-cpp not found under ${OJ_DEPS_JWT_SRC}")
+    endif()
+
+    if(EXISTS "${OJ_DEPS_SPDLOG_SRC}/include/spdlog/spdlog.h")
+        add_library(oj_spdlog INTERFACE)
+        target_include_directories(oj_spdlog INTERFACE "${OJ_DEPS_SPDLOG_SRC}/include")
+        add_library(spdlog::spdlog ALIAS oj_spdlog)
+    else()
+        message(FATAL_ERROR "spdlog not found under ${OJ_DEPS_SPDLOG_SRC}")
+    endif()
+
+    if(EXISTS "${OJ_DEPS_DOCTEST_SRC}/doctest/doctest.h")
+        add_library(oj_doctest INTERFACE)
+        target_include_directories(oj_doctest INTERFACE "${OJ_DEPS_DOCTEST_SRC}")
+        add_library(doctest::doctest ALIAS oj_doctest)
+    else()
+        message(FATAL_ERROR "doctest not found under ${OJ_DEPS_DOCTEST_SRC}")
+    endif()
+
+    message(STATUS "OJ backend: using local deps at ${OJ_LOCAL_DEPS_DIR}")
+else()
+    include(${CMAKE_SOURCE_DIR}/cmake/deps.cmake)   # FetchContent：nlohmann_json / cpp_httplib / jwt_cpp / spdlog / doctest
+endif()
 
 # ---- 全局编译选项 -----------------------------------------------------------
 add_library(oj_warnings INTERFACE)
@@ -49,7 +103,6 @@ target_compile_options(oj_warnings INTERFACE
 )
 
 # ---- 公共源文件收集（include 与 src 镜像）----------------------------------
-# 使用 GLOB 在 Phase 1 占位（后续 Phase 补完 .cpp 后即自动纳入）
 file(GLOB OJ_COMMON_SRC
      "${CMAKE_SOURCE_DIR}/src/common/*.cpp")
 file(GLOB OJ_COMMON_INC
@@ -57,9 +110,11 @@ file(GLOB OJ_COMMON_INC
 
 file(GLOB OJ_HTTP_SRC
      "${CMAKE_SOURCE_DIR}/src/http/*.cpp"
+     "${CMAKE_SOURCE_DIR}/src/http/handlers/*.cpp"
      "${CMAKE_SOURCE_DIR}/src/http/middleware/*.cpp")
 file(GLOB OJ_HTTP_INC
      "${CMAKE_SOURCE_DIR}/include/http/*.hpp"
+     "${CMAKE_SOURCE_DIR}/include/http/handlers/*.hpp"
      "${CMAKE_SOURCE_DIR}/include/http/middleware/*.hpp")
 
 file(GLOB OJ_DOMAIN_SRC
@@ -72,25 +127,22 @@ file(GLOB OJ_INFRA_SRC
 file(GLOB OJ_INFRA_INC
      "${CMAKE_SOURCE_DIR}/include/infra/*.hpp")
 
-# ---- 主可执行文件：oj_backend ----------------------------------------------
-add_executable(oj_backend
-    src/main.cpp
+# ---- 核心静态库：oj_core (供主程序 + 测试共用) -----------------------------
+add_library(oj_core STATIC
     ${OJ_COMMON_SRC}
     ${OJ_HTTP_SRC}
     ${OJ_DOMAIN_SRC}
     ${OJ_INFRA_SRC}
 )
-
-target_include_directories(oj_backend
-    PRIVATE
+target_include_directories(oj_core
+    PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${MYSQLCLIENT_INCLUDE_DIRS}
         ${LIBCURL_INCLUDE_DIRS}
         ${LIBARGON2_INCLUDE_DIRS}
 )
-
-target_link_libraries(oj_backend
-    PRIVATE
+target_link_libraries(oj_core
+    PUBLIC
         oj_warnings
         nlohmann_json::nlohmann_json
         cpp_httplib::cpp_httplib
@@ -102,6 +154,12 @@ target_link_libraries(oj_backend
         OpenSSL::SSL OpenSSL::Crypto
         Threads::Threads
 )
+
+# ---- 主可执行文件：oj_backend ----------------------------------------------
+add_executable(oj_backend
+    src/main.cpp
+)
+target_link_libraries(oj_backend PRIVATE oj_core)
 
 # 运行时配置文件挂到二进制旁边（便于容器内通过 -cwd 切换覆盖）
 configure_file(
@@ -126,20 +184,10 @@ if(OJ_BUILD_TESTS)
          "${CMAKE_SOURCE_DIR}/tests/*.cpp")
 
     add_executable(oj_unit_tests ${OJ_TEST_SRC})
-    target_include_directories(oj_unit_tests
-        PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(oj_unit_tests
         PRIVATE
+            oj_core
             oj_warnings
-            nlohmann_json::nlohmann_json
-            cpp_httplib::cpp_httplib
-            jwt-cpp::jwt-cpp
-            spdlog::spdlog
-            PkgConfig::MYSQLCLIENT
-            PkgConfig::LIBCURL
-            PkgConfig::LIBARGON2
-            OpenSSL::SSL OpenSSL::Crypto
-            Threads::Threads
             doctest::doctest
     )
 
