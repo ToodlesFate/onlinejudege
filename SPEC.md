@@ -1237,7 +1237,7 @@ open http://localhost
 ### Phases 2 - 账户系统
 - [x] users 表 / Argon2 密码哈希（详见 §9.6 / `docs/phase2-verification.md`）
 - [x] `/api/auth/register` 实现首注册为 admin 逻辑（详见 §9.7 / `docs/phase3-verification.md`）
-- [ ] `/api/auth/login` + JWT 颁发
+- [x] `/api/auth/login` + JWT 颁发
 - [ ] `/api/auth/refresh` + Refresh Cookie + 静默刷新
 - [ ] 前端：登录/注册页 + Token 存储 + API 客户端
 

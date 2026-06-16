@@ -3,7 +3,7 @@
 // =============================================================================
 //  oj::domain::AuthService — 注册 / 登录 / 刷新领域逻辑
 //  SPEC §2.1 / §3.2.2 "AuthService"
-//  本阶段仅实现 register()，login() / refresh() 留作后续 Phase 2 子项。
+//  本阶段实现 register() + login()；refresh() 留作后续 Phase 2 子项。
 //
 //  设计要点：
 //    1. 构造时注入 IUserRepository + PasswordHasher + JwtService —— 全部
@@ -53,6 +53,29 @@ struct RegisterResult {
     bool         is_admin{false};
 };
 
+// 登录流程的细分类：与 RegisterErrorKind 区分开以让 handler 一目了然
+enum class LoginErrorKind {
+    BadRequest,    // → 1001  (username/password 缺失)
+    Unauthorized,  // → 1002  (用户不存在 / 密码错误 —— 对外统一为"invalid credentials"以避免用户名枚举)
+    Internal,      // → 1007
+};
+
+class LoginError : public std::runtime_error {
+public:
+    LoginError(LoginErrorKind k, std::string msg)
+        : std::runtime_error(std::move(msg)), kind_(k) {}
+    [[nodiscard]] LoginErrorKind kind() const noexcept { return kind_; }
+private:
+    LoginErrorKind kind_;
+};
+
+struct LoginResult {
+    std::int64_t user_id{};
+    std::string  access_token;
+    std::string  refresh_token;
+    bool         is_admin{false};
+};
+
 class AuthService {
 public:
     AuthService(std::shared_ptr<IUserRepository> users,
@@ -66,6 +89,14 @@ public:
     [[nodiscard]] RegisterResult register_user(std::string_view username,
                                               std::string_view email,
                                               std::string_view password);
+
+    // 登录流程，失败抛 LoginError
+    //   - BadRequest     : username / password 为空
+    //   - Unauthorized   : 用户不存在 / 密码错误 —— 出于安全统一返回 1002，
+    //                      message 一律 "invalid username or password"，
+    //                      避免泄露用户名是否存在
+    [[nodiscard]] LoginResult login_user(std::string_view username,
+                                        std::string_view password);
 
     // 暴露给 handler 用来把 Refresh Token 写入 Set-Cookie 时附带 Max-Age
     [[nodiscard]] int refresh_ttl_sec() const noexcept {

@@ -327,4 +327,261 @@ TEST(AuthHandlerTest, GetOnRegisterPathReturns404) {
     EXPECT_EQ(j["code"].get<int>(), 1004);
 }
 
+// ===========================================================================
+//  POST /api/auth/login  ——  SPEC §5.2.1
+// ===========================================================================
+//
+// 共享辅助：先 register 一个用户，再走 login 路径；这样测试只关注 login 自身。
+struct LoginBundle {
+    std::unique_ptr<ScopedServer>      server;
+    std::shared_ptr<InMemoryUserRepo>  repo;
+    std::shared_ptr<AuthService>       auth;
+    std::shared_ptr<std::atomic<bool>> db_ready{std::make_shared<std::atomic<bool>>(true)};
+};
+
+LoginBundle make_login_server(uint16_t port) {
+    LoginBundle b;
+    b.repo = std::make_shared<InMemoryUserRepo>();
+    auto h = std::make_shared<PasswordHasher>();
+    auto j = std::make_shared<JwtService>(make_jwt_cfg());
+    b.auth = std::make_shared<AuthService>(b.repo, h, j);
+    b.server = std::make_unique<ScopedServer>(port);
+    auto ready_ptr = b.db_ready;
+    oj::http::handlers::register_auth_routes(
+        b.server->server(), b.auth,
+        [ready_ptr] { return ready_ptr->load(std::memory_order_acquire); });
+    return b;
+}
+
+nlohmann::json registered_user_body() {
+    return {
+        {"username", "alice"},
+        {"email",    "alice@x.com"},
+        {"password", "password123"},
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Happy path
+// ---------------------------------------------------------------------------
+TEST(AuthLoginHandlerTest, ValidLoginReturnsTokensAndAdminFlag) {
+    LoginBundle b = make_login_server(19110);
+    b.server->start();
+    auto cli = make_client(19110);
+
+    auto reg = cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+    if (!reg) GTEST_SKIP() << "port 19110 not reachable in this environment";
+    ASSERT_EQ(reg->status, 200);
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "password123"}};
+    auto res = cli.Post("/api/auth/login", body.dump(), "application/json");
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 0);
+    ASSERT_TRUE(j["data"].is_object());
+    EXPECT_EQ(j["data"]["user_id"].get<std::int64_t>(), 1);
+    EXPECT_TRUE (j["data"]["is_admin"].get<bool>());  // alice 是首个用户 → admin
+    EXPECT_FALSE(j["data"]["access_token"].get<std::string>().empty());
+}
+
+TEST(AuthLoginHandlerTest, LoginSetsRefreshTokenCookie) {
+    LoginBundle b = make_login_server(19111);
+    b.server->start();
+    auto cli = make_client(19111);
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "password123"}};
+    auto res = cli.Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19111 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+
+    const std::string set_cookie = res->get_header_value("Set-Cookie");
+    EXPECT_NE(set_cookie.find("refresh_token="),  std::string::npos);
+    EXPECT_NE(set_cookie.find("HttpOnly"),        std::string::npos);
+    EXPECT_NE(set_cookie.find("Path=/api/auth"),  std::string::npos);
+    EXPECT_NE(set_cookie.find("SameSite=Lax"),    std::string::npos);
+    EXPECT_NE(set_cookie.find("Max-Age=86400"),   std::string::npos);
+}
+
+TEST(AuthLoginHandlerTest, LoginIssuedAccessTokenIsValidJwt) {
+    LoginBundle b = make_login_server(19112);
+    b.server->start();
+    auto cli = make_client(19112);
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "password123"}};
+    auto res = cli.Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19112 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+
+    auto j = nlohmann::json::parse(res->body);
+    const std::string access = j["data"]["access_token"].get<std::string>();
+    // JWT 必有 2 个 dot
+    int dots = 0;
+    for (char c : access) if (c == '.') ++dots;
+    EXPECT_EQ(dots, 2);
+    EXPECT_GT(access.size(), 50u);
+
+    // 进一步：用我们自己的 JwtService 解一遍，确认 claim 与 response 一致
+    auto jwt = std::make_shared<JwtService>(make_jwt_cfg());
+    auto claims = jwt->verify(access, "access");
+    EXPECT_EQ(claims.user_id,  j["data"]["user_id"].get<std::int64_t>());
+    EXPECT_EQ(claims.is_admin, j["data"]["is_admin"].get<bool>());
+}
+
+TEST(AuthLoginHandlerTest, SecondUserLoginIsNotAdmin) {
+    LoginBundle b = make_login_server(19113);
+    b.server->start();
+    auto cli = make_client(19113);
+    // 注册两个用户：alice 是 admin，bob 不是
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+    cli.Post("/api/auth/register",
+             nlohmann::json{{"username","bob"},{"email","b@x.com"},{"password","password456"}}.dump(),
+             "application/json");
+
+    auto res = cli.Post("/api/auth/login",
+                        nlohmann::json{{"username","bob"},{"password","password456"}}.dump(),
+                        "application/json");
+    if (!res) GTEST_SKIP() << "port 19113 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["user_id"].get<std::int64_t>(), 2);
+    EXPECT_FALSE(j["data"]["is_admin"].get<bool>());
+}
+
+// ---------------------------------------------------------------------------
+//  错误路径
+// ---------------------------------------------------------------------------
+TEST(AuthLoginHandlerTest, WrongPasswordReturns401WithGenericMessage) {
+    LoginBundle b = make_login_server(19114);
+    b.server->start();
+    auto cli = make_client(19114);
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "wrong-password"}};
+    auto res = cli.Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19114 not reachable in this environment";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+    EXPECT_EQ(std::string{j["message"]}, "invalid username or password");
+}
+
+TEST(AuthLoginHandlerTest, UnknownUsernameReturns401WithSameMessageAsWrongPassword) {
+    // 防用户名枚举：未知用户 vs 错密码 → 同一 message
+    LoginBundle b = make_login_server(19115);
+    b.server->start();
+    auto cli = make_client(19115);
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+
+    auto r1 = cli.Post("/api/auth/login",
+                       nlohmann::json{{"username","nobody"},{"password","x"}}.dump(),
+                       "application/json");
+    auto r2 = cli.Post("/api/auth/login",
+                       nlohmann::json{{"username","alice"},{"password","wrong"}}.dump(),
+                       "application/json");
+    if (!r1 || !r2) GTEST_SKIP() << "port 19115 not reachable in this environment";
+    ASSERT_EQ(r1->status, 401);
+    ASSERT_EQ(r2->status, 401);
+    auto j1 = nlohmann::json::parse(r1->body);
+    auto j2 = nlohmann::json::parse(r2->body);
+    EXPECT_EQ(j1["code"].get<int>(), 1002);
+    EXPECT_EQ(j2["code"].get<int>(), 1002);
+    EXPECT_EQ(std::string{j1["message"]}, std::string{j2["message"]});
+}
+
+TEST(AuthLoginHandlerTest, LoginDoesNotLeakRefreshTokenInBody) {
+    // refresh 只走 cookie；body data 里只有 user_id/access_token/is_admin
+    LoginBundle b = make_login_server(19116);
+    b.server->start();
+    auto cli = make_client(19116);
+    cli.Post("/api/auth/register", registered_user_body().dump(), "application/json");
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "password123"}};
+    auto res = cli.Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19116 not reachable in this environment";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"].count("refresh_token"), 0u)
+        << "refresh_token must NOT appear in JSON body (it goes via Set-Cookie)";
+    EXPECT_EQ(j["data"].count("access_token"),  1u);
+    EXPECT_EQ(j["data"].count("user_id"),       1u);
+    EXPECT_EQ(j["data"].count("is_admin"),      1u);
+}
+
+// ---------------------------------------------------------------------------
+//  输入校验
+// ---------------------------------------------------------------------------
+TEST(AuthLoginHandlerTest, LoginEmptyBodyReturns400) {
+    LoginBundle b = make_login_server(19117);
+    b.server->start();
+    auto res = make_client(19117).Post("/api/auth/login", "", "application/json");
+    if (!res) GTEST_SKIP() << "port 19117 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST(AuthLoginHandlerTest, LoginMalformedJsonReturns400) {
+    LoginBundle b = make_login_server(19118);
+    b.server->start();
+    auto res = make_client(19118).Post("/api/auth/login", "{not-json", "application/json");
+    if (!res) GTEST_SKIP() << "port 19118 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST(AuthLoginHandlerTest, LoginMissingPasswordReturns400) {
+    LoginBundle b = make_login_server(19119);
+    b.server->start();
+    nlohmann::json body = {{"username", "alice"}};
+    auto res = make_client(19119).Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19119 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST(AuthLoginHandlerTest, LoginMissingUsernameReturns400) {
+    LoginBundle b = make_login_server(19120);
+    b.server->start();
+    nlohmann::json body = {{"password", "password123"}};
+    auto res = make_client(19120).Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19120 not reachable in this environment";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+// ---------------------------------------------------------------------------
+//  DB 不可用 → 1008
+// ---------------------------------------------------------------------------
+TEST(AuthLoginHandlerTest, LoginDbDownReturnsEnvelope) {
+    LoginBundle b = make_login_server(19121);
+    b.server->start();
+    b.db_ready->store(false, std::memory_order_release);
+
+    nlohmann::json body = {{"username", "alice"}, {"password", "password123"}};
+    auto res = make_client(19121).Post("/api/auth/login", body.dump(), "application/json");
+    if (!res) GTEST_SKIP() << "port 19121 not reachable in this environment";
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+    EXPECT_NE(std::string{j["message"]}.find("database"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+//  错误方法
+// ---------------------------------------------------------------------------
+TEST(AuthLoginHandlerTest, GetOnLoginPathReturns404) {
+    LoginBundle b = make_login_server(19122);
+    b.server->start();
+    auto res = make_client(19122).Get("/api/auth/login");
+    if (!res) GTEST_SKIP() << "port 19122 not reachable in this environment";
+    EXPECT_EQ(res->status, 404);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1004);
+}
+
 }  // namespace

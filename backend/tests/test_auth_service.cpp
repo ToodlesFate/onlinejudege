@@ -27,6 +27,8 @@ namespace {
 using oj::common::JwtConfig;
 using oj::domain::AuthService;
 using oj::domain::IUserRepository;
+using oj::domain::LoginError;
+using oj::domain::LoginErrorKind;
 using oj::domain::RegisterError;
 using oj::domain::RegisterErrorKind;
 using oj::domain::User;
@@ -324,6 +326,172 @@ TEST(AuthServiceTest, PasswordIsHashedNotStoredAsPlaintext) {
     EXPECT_TRUE(PasswordHasher::is_encoded_hash(u->password_hash));
     EXPECT_TRUE(PasswordHasher{}.verify("MySecretPassword123", u->password_hash));
     EXPECT_FALSE(PasswordHasher{}.verify("MySecretPassword124", u->password_hash));
+}
+
+// ===========================================================================
+//  login_user()  ——  SPEC §5.2.1 POST /api/auth/login
+// ===========================================================================
+
+// 准备一个含一个用户（"alice"/"password123"）的 service
+struct LoginFixture {
+    std::shared_ptr<InMemoryUserRepo> repo = std::make_shared<InMemoryUserRepo>();
+    std::shared_ptr<AuthService>      svc;
+    LoginFixture() {
+        auto h = std::make_shared<PasswordHasher>();
+        auto j = std::make_shared<JwtService>(make_jwt_cfg());
+        svc = std::make_shared<AuthService>(repo, h, j);
+        svc->register_user("alice", "alice@x.com", "password123");
+    }
+};
+
+// ---------------------------------------------------------------------------
+//  输入校验
+// ---------------------------------------------------------------------------
+TEST(AuthServiceLoginTest, RejectsEmptyUsername) {
+    LoginFixture f;
+    try {
+        f.svc->login_user("", "password123");
+        FAIL() << "expected LoginError";
+    } catch (const LoginError& e) {
+        EXPECT_EQ(e.kind(), LoginErrorKind::BadRequest);
+        EXPECT_NE(std::string{e.what()}.find("username"), std::string::npos);
+    }
+}
+
+TEST(AuthServiceLoginTest, RejectsEmptyPassword) {
+    LoginFixture f;
+    try {
+        f.svc->login_user("alice", "");
+        FAIL() << "expected LoginError";
+    } catch (const LoginError& e) {
+        EXPECT_EQ(e.kind(), LoginErrorKind::BadRequest);
+        EXPECT_NE(std::string{e.what()}.find("password"), std::string::npos);
+    }
+}
+
+TEST(AuthServiceLoginTest, RejectsBothEmpty) {
+    LoginFixture f;
+    EXPECT_THROW(f.svc->login_user("", ""), LoginError);
+}
+
+// ---------------------------------------------------------------------------
+//  用户不存在 / 密码错 —— 统一 Unauthorized + 同一 message
+// ---------------------------------------------------------------------------
+TEST(AuthServiceLoginTest, UnknownUsernameIsUnauthorizedWithGenericMessage) {
+    LoginFixture f;
+    try {
+        f.svc->login_user("nobody", "password123");
+        FAIL() << "expected LoginError";
+    } catch (const LoginError& e) {
+        EXPECT_EQ(e.kind(), LoginErrorKind::Unauthorized);
+        EXPECT_EQ(std::string{e.what()}, "invalid username or password");
+    }
+}
+
+TEST(AuthServiceLoginTest, WrongPasswordIsUnauthorizedWithGenericMessage) {
+    LoginFixture f;
+    try {
+        f.svc->login_user("alice", "wrong-password");
+        FAIL() << "expected LoginError";
+    } catch (const LoginError& e) {
+        EXPECT_EQ(e.kind(), LoginErrorKind::Unauthorized);
+        EXPECT_EQ(std::string{e.what()}, "invalid username or password");
+    }
+}
+
+TEST(AuthServiceLoginTest, UnknownUserAndWrongPasswordProduceSameMessage) {
+    // 防用户名枚举：两种"失败"原因对外必须完全相同
+    LoginFixture f;
+    std::string msg_unknown, msg_wrong;
+    try { f.svc->login_user("nobody", "x"); }
+    catch (const LoginError& e) { msg_unknown = e.what(); }
+    try { f.svc->login_user("alice", "wrong"); }
+    catch (const LoginError& e) { msg_wrong = e.what(); }
+    EXPECT_EQ(msg_unknown, msg_wrong);
+    EXPECT_FALSE(msg_unknown.empty());
+}
+
+// ---------------------------------------------------------------------------
+//  Happy path
+// ---------------------------------------------------------------------------
+TEST(AuthServiceLoginTest, ValidCredentialsReturnUserIdIsAdminAndTokens) {
+    LoginFixture f;
+    auto r = f.svc->login_user("alice", "password123");
+    EXPECT_GT(r.user_id, 0);
+    EXPECT_TRUE(r.is_admin);   // alice 是该 repo 的首行 → admin（fixture 内她是唯一用户）
+    EXPECT_FALSE(r.access_token.empty());
+    EXPECT_FALSE(r.refresh_token.empty());
+    EXPECT_NE(r.access_token, r.refresh_token);
+}
+
+TEST(AuthServiceLoginTest, LoginIsAdminFlagMatchesStoredUser) {
+    // 首个注册用户就是 admin —— 登录也应原样返回 is_admin=true
+    auto repo = std::make_shared<InMemoryUserRepo>();
+    auto h    = std::make_shared<PasswordHasher>();
+    auto j    = std::make_shared<JwtService>(make_jwt_cfg());
+    auto svc  = std::make_shared<AuthService>(repo, h, j);
+    svc->register_user("admin1", "admin1@x.com", "password123");
+    auto r = svc->login_user("admin1", "password123");
+    EXPECT_TRUE(r.is_admin);
+}
+
+// ---------------------------------------------------------------------------
+//  颁发出来的 token 真的是合法 JWT，且能解出正确 claims
+// ---------------------------------------------------------------------------
+TEST(AuthServiceLoginTest, LoginIssuedAccessTokenVerifiesWithExpectedClaims) {
+    LoginFixture f;
+    auto r = f.svc->login_user("alice", "password123");
+    auto jwt = std::make_shared<JwtService>(make_jwt_cfg());
+    auto claims = jwt->verify(r.access_token, "access");
+    EXPECT_EQ(claims.user_id,  r.user_id);
+    EXPECT_EQ(claims.is_admin, r.is_admin);
+    EXPECT_EQ(claims.type,     "access");
+}
+
+TEST(AuthServiceLoginTest, LoginIssuedRefreshTokenVerifiesAsRefreshType) {
+    LoginFixture f;
+    auto r = f.svc->login_user("alice", "password123");
+    auto jwt = std::make_shared<JwtService>(make_jwt_cfg());
+    auto claims = jwt->verify(r.refresh_token, "refresh");
+    EXPECT_EQ(claims.user_id, r.user_id);
+    EXPECT_FALSE(claims.is_admin);  // refresh 不带 adm
+    EXPECT_EQ(claims.type,    "refresh");
+}
+
+TEST(AuthServiceLoginTest, LoginAccessTokenRejectedAsRefreshAndViceVersa) {
+    LoginFixture f;
+    auto r = f.svc->login_user("alice", "password123");
+    auto jwt = std::make_shared<JwtService>(make_jwt_cfg());
+    EXPECT_THROW(jwt->verify(r.access_token,  "refresh"), oj::infra::InvalidToken);
+    EXPECT_THROW(jwt->verify(r.refresh_token, "access"),  oj::infra::InvalidToken);
+}
+
+TEST(AuthServiceLoginTest, LoginTokensFailVerificationWithWrongSecret) {
+    LoginFixture f;
+    auto r = f.svc->login_user("alice", "password123");
+    JwtConfig bad_cfg = make_jwt_cfg();
+    bad_cfg.secret    = "a-different-32-byte-secret-pad-pad";
+    auto bad_jwt = std::make_shared<JwtService>(bad_cfg);
+    EXPECT_THROW(bad_jwt->verify(r.access_token,  "access"),  oj::infra::InvalidToken);
+    EXPECT_THROW(bad_jwt->verify(r.refresh_token, "refresh"), oj::infra::InvalidToken);
+}
+
+TEST(AuthServiceLoginTest, LoginAfterRegisterIssuesEquivalentUserIdentity) {
+    // 注册后立刻登录 —— 两次的 user_id / is_admin 必须一致
+    LoginFixture f;
+    auto u = f.repo->find_by_username("alice");
+    ASSERT_TRUE(u.has_value());
+    auto r = f.svc->login_user("alice", "password123");
+    EXPECT_EQ(r.user_id,  u->id);
+    EXPECT_EQ(r.is_admin, u->is_admin);
+}
+
+TEST(AuthServiceLoginTest, LoginIsCaseSensitive) {
+    // SPEC §2.1 用户名唯一，登录不区分大小写属于"业务策略"问题；
+    // 本实现保持存储原样、按 byte 比对，区分大小写。这里固化该行为。
+    LoginFixture f;
+    EXPECT_THROW(f.svc->login_user("ALICE", "password123"), LoginError);
+    EXPECT_NO_THROW (f.svc->login_user("alice", "password123"));
 }
 
 }  // namespace

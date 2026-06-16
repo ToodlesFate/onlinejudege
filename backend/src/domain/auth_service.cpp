@@ -130,4 +130,60 @@ RegisterResult AuthService::register_user(std::string_view username,
     return r;
 }
 
+LoginResult AuthService::login_user(std::string_view username,
+                                    std::string_view password) {
+    // 1) 字段校验 —— 仅做"非空"检查；不在登录路径做长度/字符集校验
+    //    （即使用户名长度非法也交给 401 处理，避免向潜在攻击者泄露
+    //    "哪些字段会被服务端解析"）。
+    if (username.empty() || password.empty()) {
+        throw LoginError(LoginErrorKind::BadRequest,
+                         "username and password are required");
+    }
+
+    // 2) 查 user（按 username 唯一索引）
+    oj::domain::User u;
+    try {
+        auto found = users_->find_by_username(username);
+        if (!found.has_value()) {
+            // 用户不存在 —— 与"密码错"统一对外响应，避免用户名枚举
+            spdlog::info("AuthService: login failed (unknown user) username='{}'",
+                         std::string{username});
+            throw LoginError(LoginErrorKind::Unauthorized,
+                             "invalid username or password");
+        }
+        u = *found;
+    } catch (const LoginError&) {
+        throw;
+    } catch (const std::exception& e) {
+        spdlog::error("AuthService: login DB lookup error: {}", e.what());
+        throw LoginError(LoginErrorKind::Internal, "internal error");
+    }
+
+    // 3) 密码校验 —— PasswordHasher::verify 自身是 noexcept + 永不抛
+    //    任何"hash 格式异常/被篡改"也只返回 false，统一走 401 路径
+    bool ok = false;
+    try {
+        ok = hasher_->verify(password, u.password_hash);
+    } catch (const std::exception& e) {
+        // 理论上 verify 不应抛；这里兜底防意外
+        spdlog::error("AuthService: hasher.verify threw: {}", e.what());
+        throw LoginError(LoginErrorKind::Internal, "internal error");
+    }
+    if (!ok) {
+        spdlog::info("AuthService: login failed (bad password) user_id={} username='{}'",
+                     u.id, std::string{username});
+        throw LoginError(LoginErrorKind::Unauthorized,
+                         "invalid username or password");
+    }
+
+    // 4) 颁发 token —— 字段语义与 register() 一致：access 带 adm claim，
+    //    refresh 不带（refresh 仅用于换 access，不参与权限判定）
+    LoginResult r;
+    r.user_id       = u.id;
+    r.is_admin      = u.is_admin;
+    r.access_token  = jwt_->issue_access(u.id, u.is_admin);
+    r.refresh_token = jwt_->issue_refresh(u.id);
+    return r;
+}
+
 }  // namespace oj::domain
