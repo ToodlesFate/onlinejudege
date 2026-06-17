@@ -1,0 +1,410 @@
+/* =============================================================================
+ *  admin-page.css — 后台管理（题目列表 + 新建/编辑）专用样式
+ *  依据 SPEC §3.3.5 L / M
+ *
+ *  包含：
+ *    - 管理后台通用工具栏 (apl-*)
+ *    - 后台题目管理表格 (apl-table / apl-status / apl-actions)
+ *    - 新建/编辑页两栏布局 (ape-main / ape-left / ape-right)
+ *    - 题面编辑器 + 预览 (ape-md-*)
+ *    - 元数据表单 (ape-radios / ape-tagbox / ape-limits / ape-pub / ape-buttons)
+ *    - 测试点管理表格 (ape-cases-table / ape-case-textarea / ape-case-score)
+ * ============================================================================= */
+
+/* =============================================================================
+ *  通用：后台工具栏
+ * ============================================================================= */
+.apl-toolbar {
+    /* 复用 pl-toolbar 的样式 */
+}
+
+.apl-status {
+    /* 占位：loading / error / table 容器 */
+}
+
+/* =============================================================================
+ *  后台题目管理表格 (SPEC §3.3.5 L)
+ * ============================================================================= */
+.apl-table {
+    table-layout: auto;
+}
+
+.apl-table th {
+    white-space: nowrap;
+}
+
+.apl-row {
+    transition: background var(--t-fast) var(--ease-out);
+}
+
+.apl-title {
+    color: var(--fg-0);
+    font-weight: 500;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.apl-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1);
+}
+
+.apl-status--pub {
+    background: rgba(74, 222, 128, 0.12);
+    color: var(--ok);
+    border-color: rgba(74, 222, 128, 0.30);
+}
+.apl-status--draft {
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--fg-2);
+    border-color: rgba(148, 163, 184, 0.30);
+}
+
+.apl-actions {
+    display: flex;
+    gap: var(--sp-1);
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+}
+
+.apl-actions .btn {
+    height: 26px;
+    padding: 0 var(--sp-2);
+    font-size: var(--fs-xs);
+}
+
+/* =============================================================================
+ *  新建/编辑题目 (SPEC §3.3.5 M)
+ * ============================================================================= */
+.ape-topbar {
+    margin-bottom: var(--sp-4);
+}
+
+.ape-main {
+    display: grid;
+    grid-template-columns: 3fr 2fr;     /* 左 60% / 右 40% */
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-4);
+}
+
+@media (max-width: 1100px) {
+    .ape-main {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ape-left,
+.ape-right {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+
+.ape-right {
+    background: var(--bg-1);
+}
+
+/* ---- 题面编辑器：tabs + Monaco + 预览 ---- */
+.ape-md__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    border-bottom: 1px solid var(--divider);
+    padding-bottom: var(--sp-2);
+}
+
+.ape-md__head .pd-h3 {
+    margin-bottom: 0;
+}
+
+.ape-md__tabs {
+    display: inline-flex;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 2px;
+    gap: 2px;
+}
+
+.ape-md__tab {
+    height: 26px;
+    padding: 0 var(--sp-3);
+    border-radius: var(--r-sm);
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+    background: transparent;
+    cursor: pointer;
+    transition:
+        background var(--t-fast) var(--ease-out),
+        color      var(--t-fast) var(--ease-out);
+}
+
+.ape-md__tab:hover {
+    color: var(--fg-0);
+    background: var(--bg-2);
+}
+
+.ape-md__tab.is-active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.ape-md__editor {
+    min-height: 480px;
+    height: 60vh;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+}
+
+.ape-md__fallback {
+    width: 100%;
+    height: 100%;
+    min-height: 480px;
+    background: var(--bg-input);
+    color: var(--fg-0);
+    border: none;
+    border-radius: 0;
+    padding: var(--sp-3);
+    resize: vertical;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    tab-size: 2;
+}
+
+.ape-md__preview {
+    min-height: 480px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: var(--sp-4) var(--sp-5);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--fg-1);
+    line-height: 1.7;
+}
+
+/* 与 problem-detail 共用一套 markdown 渲染样式 */
+.ape-md__preview h1,
+.ape-md__preview h2,
+.ape-md__preview h3,
+.ape-md__preview h4 {
+    color: var(--fg-0);
+    margin: var(--sp-4) 0 var(--sp-2);
+    font-weight: 600;
+}
+.ape-md__preview h1 { font-size: var(--fs-xl); }
+.ape-md__preview h2 { font-size: var(--fs-lg); }
+.ape-md__preview h3 { font-size: var(--fs-md); }
+.ape-md__preview p  { margin: var(--sp-2) 0; }
+.ape-md__preview ul,
+.ape-md__preview ol {
+    margin: var(--sp-2) 0;
+    padding-left: var(--sp-5);
+    list-style: disc;
+}
+.ape-md__preview ol { list-style: decimal; }
+.ape-md__preview li { margin: var(--sp-1) 0; }
+.ape-md__preview code {
+    background: var(--bg-3);
+    color: var(--fg-0);
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    font-size: 0.92em;
+}
+.ape-md__preview pre {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+    overflow-x: auto;
+    margin: var(--sp-3) 0;
+}
+.ape-md__preview pre code {
+    background: transparent;
+    padding: 0;
+}
+.ape-md__preview blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: var(--sp-3);
+    color: var(--fg-2);
+    margin: var(--sp-3) 0;
+}
+.ape-md__preview a { color: var(--accent); }
+.ape-md__preview table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--sp-3) 0;
+}
+.ape-md__preview th,
+.ape-md__preview td {
+    border: 1px solid var(--border);
+    padding: var(--sp-2) var(--sp-3);
+    text-align: left;
+}
+.ape-md__preview th { background: var(--bg-3); }
+
+/* ---- 难度 radio ---- */
+.ape-radios {
+    display: flex;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.ape-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+}
+
+.ape-radio input[type="radio"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* ---- 标签多选 ---- */
+.ape-tagbox {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+
+.ape-tagbox__item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    height: 30px;
+    padding: 0 var(--sp-3);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+    color: var(--fg-1);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    user-select: none;
+    transition: all var(--t-fast) var(--ease-out);
+}
+
+.ape-tagbox__item:has(input:checked) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.ape-tagbox__item input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.ape-tagbox__item:hover {
+    border-color: var(--accent);
+}
+
+/* ---- 资源限制三件套 ---- */
+.ape-limits {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--sp-2);
+}
+
+@media (max-width: 720px) {
+    .ape-limits {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ape-limit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+}
+
+.ape-limit__label {
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+}
+
+/* ---- 立即发布 checkbox ---- */
+.ape-pub {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+    user-select: none;
+    font-size: var(--fs-sm);
+    color: var(--fg-1);
+    padding: var(--sp-2) 0;
+}
+
+.ape-pub input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* ---- 按钮区 ---- */
+.ape-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--divider);
+}
+
+.ape-buttons .btn {
+    min-width: 110px;
+}
+
+/* =============================================================================
+ *  测试点管理 (SPEC §3.3.5 M)
+ * ============================================================================= */
+.ape-cases {
+    background: var(--bg-2);
+}
+
+.ape-cases .pd-h3 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+}
+
+.ape-cases-table {
+    table-layout: fixed;
+}
+
+.ape-case-textarea {
+    min-height: 38px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+}
+
+.ape-case-score {
+    text-align: center;
+}
+
+.ape-cases-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--sp-3);
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.ape-cases-hint {
+    font-size: var(--fs-xs);
+}

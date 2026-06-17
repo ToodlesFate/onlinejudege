@@ -1261,7 +1261,7 @@ open http://localhost
 
 ### Phases 5 - 后台管理
 - [x] admin API：CRUD + 上下架
-- [ ] 前端：管理后台题目列表 + Monaco Markdown 编辑器 + 客户端预览
+- [x] 前端：管理后台题目列表 + Monaco Markdown 编辑器 + 客户端预览
 - [ ] 测试点动态增删 + 校验总分 = 100
 
 ### Phases 6 - 提交历史 + 详情
