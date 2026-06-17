@@ -61,6 +61,20 @@ public:
      */
     virtual std::optional<ProblemDetail> get_detail(std::int64_t id,
                                                    bool include_unpublished) = 0;
+
+    /**
+     * 列出全部 tag —— SPEC §5.2.2 GET /api/tags
+     *   - 公开 API，返回 8 个预置 tag（id ASC）
+     *   - 业务上不会变，但 repo 每次都重查（8 行，索引 PK，开销忽略）
+     *   - 后续 phase 可以加内存缓存 + TTL，目前不做
+     */
+    virtual std::vector<Tag> list_tags() = 0;
+
+#ifndef OJ_PRODUCTION
+    // 测试辅助：让 handler 测试可以直接拿到 tags repo
+    // （不在生产代码中暴露该 API）
+    virtual std::shared_ptr<ITagRepository> tags_repo_for_test() = 0;
+#endif
 };
 
 // 标准实现 —— 直接代理到 IProblemRepository
@@ -78,6 +92,10 @@ public:
     ProblemListResult list(const ProblemListQuery& q) override;
     std::optional<ProblemDetail> get_detail(std::int64_t id,
                                            bool include_unpublished) override;
+    std::vector<Tag> list_tags() override;
+#ifndef OJ_PRODUCTION
+    std::shared_ptr<ITagRepository> tags_repo_for_test() override { return tags_; }
+#endif
 
 private:
     std::shared_ptr<IProblemRepository>   problems_;

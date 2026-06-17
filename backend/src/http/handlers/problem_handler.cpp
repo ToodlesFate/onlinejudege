@@ -66,6 +66,56 @@ json result_to_json(const oj::domain::ProblemListResult& r) {
     };
 }
 
+// ---------------------------------------------------------------------------
+//  GET /api/tags
+//
+//  业务流程：
+//   1) DB readiness → 503 if down
+//   2) service.list_tags() → vector<Tag>（id ASC）
+//   3) 序列化为 JSON → write_ok（data 为数组，envelope 同 §5.1）
+//
+//  响应 data 形状：
+//   [
+//     {"id": 1, "name": "数组", "slug": "数组"},
+//     {"id": 2, "name": "字符串", "slug": "string"},
+//     ...
+//   ]
+// ---------------------------------------------------------------------------
+json tags_to_json(const std::vector<oj::domain::Tag>& tags) {
+    json arr = json::array();
+    for (const auto& t : tags) {
+        arr.push_back({
+            {"id",   t.id},
+            {"name", t.name},
+            {"slug", t.slug},
+        });
+    }
+    return arr;
+}
+
+void handle_tags(const std::shared_ptr<oj::domain::IProblemService>& service,
+                 const std::function<bool()>& is_db_ready,
+                 const httplib::Request&, httplib::Response& res) {
+    using oj::common::ErrorCode;
+
+    if (is_db_ready && !is_db_ready()) {
+        write_error(res, ErrorCode::SystemError, "database not available");
+        return;
+    }
+
+    std::vector<oj::domain::Tag> tags;
+    try {
+        tags = service->list_tags();
+    } catch (const std::exception& e) {
+        spdlog::error("GET /api/tags DB error: {}", e.what());
+        write_error(res, ErrorCode::Internal, "internal server error");
+        return;
+    }
+
+    spdlog::info("GET /api/tags returned={}", tags.size());
+    write_ok(res, tags_to_json(tags));
+}
+
 // 共享的 GET /api/problems handler 闭包
 //
 // 业务流程：
@@ -218,6 +268,9 @@ void register_problem_routes(HttpServer& server,
     });
     server.get("/api/problems/:id", [sp_service, sp_ready](const httplib::Request& req, httplib::Response& res) {
         handle_detail(sp_service, sp_ready, req, res);
+    });
+    server.get("/api/tags", [sp_service, sp_ready](const httplib::Request& req, httplib::Response& res) {
+        handle_tags(sp_service, sp_ready, req, res);
     });
 }
 

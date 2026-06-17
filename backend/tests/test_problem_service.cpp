@@ -716,4 +716,68 @@ TEST(ProblemServiceGetDetailTest, NoTestCasesReturnsEmptySamples) {
         << "hidden test cases must not be returned to public";
 }
 
+// ===========================================================================
+//  list_tags —— ProblemService 行为测试（SPEC §5.2.2 GET /api/tags）
+// ===========================================================================
+TEST(ProblemServiceListTagsTest, ReturnsEmptyListWhenRepoEmpty) {
+    auto repo  = std::make_shared<InMemoryProblemRepository>();
+    auto cases = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags  = std::make_shared<InMemoryTagRepo>();
+    auto svc   = std::make_shared<ProblemService>(repo, cases, tags);
+    auto out = svc->list_tags();
+    EXPECT_TRUE(out.empty());
+}
+
+TEST(ProblemServiceListTagsTest, ReturnsAllSeededTags) {
+    auto repo  = std::make_shared<InMemoryProblemRepository>();
+    auto cases = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags  = std::make_shared<InMemoryTagRepo>();
+    auto svc   = std::make_shared<ProblemService>(repo, cases, tags);
+    // 灌 8 个 tag（SPEC §4.2 预置数据）
+    oj::domain::Tag arr{1, "数组", "数组"};
+    oj::domain::Tag str{2, "字符串", "string"};
+    oj::domain::Tag ll{3, "链表", "linked-list"};
+    oj::domain::Tag sq{4, "栈/队列", "stack-queue"};
+    oj::domain::Tag tr{5, "树", "tree"};
+    oj::domain::Tag gr{6, "图", "graph"};
+    oj::domain::Tag dp{7, "动态规划", "dp"};
+    oj::domain::Tag gr2{8, "贪心", "greedy"};
+    for (const auto& t : {arr, str, ll, sq, tr, gr, dp, gr2}) tags->seed_tag(t);
+    auto out = svc->list_tags();
+    ASSERT_EQ(out.size(), 8u);
+    // 按 id ASC
+    for (int i = 0; i < 8; ++i) {
+        EXPECT_EQ(out[i].id, i + 1);
+    }
+    EXPECT_EQ(out[0].name, "数组");
+    EXPECT_EQ(out[0].slug, "数组");
+    EXPECT_EQ(out[1].name, "字符串");
+    EXPECT_EQ(out[1].slug, "string");
+    EXPECT_EQ(out[6].name, "动态规划");
+    EXPECT_EQ(out[7].name, "贪心");
+}
+
+TEST(ProblemServiceListTagsTest, IsOrderStableAcrossCalls) {
+    auto repo  = std::make_shared<InMemoryProblemRepository>();
+    auto cases = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags  = std::make_shared<InMemoryTagRepo>();
+    auto svc   = std::make_shared<ProblemService>(repo, cases, tags);
+    oj::domain::Tag t1{1, "a", "a"};
+    oj::domain::Tag t3{3, "c", "c"};
+    oj::domain::Tag t2{2, "b", "b"};
+    tags->seed_tag(t1);
+    tags->seed_tag(t3);
+    tags->seed_tag(t2);
+    auto out1 = svc->list_tags();
+    auto out2 = svc->list_tags();
+    ASSERT_EQ(out1.size(), 3u);
+    EXPECT_EQ(out1[0].id, 1);
+    EXPECT_EQ(out1[1].id, 2);
+    EXPECT_EQ(out1[2].id, 3);
+    // 第二次调用顺序应一致
+    EXPECT_EQ(out2[0].id, out1[0].id);
+    EXPECT_EQ(out2[1].id, out1[1].id);
+    EXPECT_EQ(out2[2].id, out1[2].id);
+}
+
 }  // namespace

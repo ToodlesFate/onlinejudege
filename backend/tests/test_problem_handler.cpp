@@ -169,13 +169,31 @@ public:
 };
 class MinimalTagRepo : public oj::domain::ITagRepository {
 public:
-    std::vector<oj::domain::Tag> list_all() override { return {}; }
+    std::vector<oj::domain::Tag> list_all() override {
+        // 返回按 id ASC 的 seed 数据 —— list_tags / 详情 tags 路径都用到
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Tag> out;
+        for (const auto& t : seed_) out.push_back(t);
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.id < b.id; });
+        return out;
+    }
     std::optional<oj::domain::Tag> find_by_id(int) override { return std::nullopt; }
     std::optional<oj::domain::Tag> find_by_slug(const std::string&) override { return std::nullopt; }
     std::vector<oj::domain::Tag> find_by_ids(const std::vector<int>&) override { return {}; }
     std::vector<oj::domain::Tag> tags_of_problem(std::int64_t) override { return {}; }
     std::vector<int> tag_ids_of_problem(std::int64_t) override { return {}; }
     void set_problem_tags(std::int64_t, const std::vector<int>&) override {}
+
+    // 测试辅助
+    void seed_tag(oj::domain::Tag t) {
+        std::lock_guard<std::mutex> lk(mu_);
+        seed_.push_back(t);
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::vector<oj::domain::Tag> seed_;
 };
 
 // 富 testcase mock —— get_detail 测试要 list_samples 真正按 is_sample 过滤
@@ -769,6 +787,129 @@ TEST(ProblemDetailHandlerTest, PostReturns404) {
     auto res = make_client(19711).Post("/api/problems/1", "{}", "application/json");
     if (!res) GTEST_SKIP() << "port 19711 not reachable";
     EXPECT_EQ(res->status, 404);
+}
+
+// ===========================================================================
+//  GET /api/tags —— SPEC §5.2.2
+// ===========================================================================
+TEST(ProblemTagsHandlerTest, ReturnsEnvelope) {
+    ServerBundle b = make_server(19800);
+    b.server->start();
+    auto res = make_client(19800).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19800 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j.value("code", -1), 0);
+    ASSERT_TRUE(j.contains("data"));
+    ASSERT_TRUE(j["data"].is_array());
+}
+
+TEST(ProblemTagsHandlerTest, ReturnsAll8Presets) {
+    ServerBundle b = make_server(19801);
+    auto tag_repo = std::static_pointer_cast<MinimalTagRepo>(b.service->tags_repo_for_test());
+    tag_repo->seed_tag({1, "数组",    "数组"});
+    tag_repo->seed_tag({2, "字符串",  "string"});
+    tag_repo->seed_tag({3, "链表",    "linked-list"});
+    tag_repo->seed_tag({4, "栈/队列", "stack-queue"});
+    tag_repo->seed_tag({5, "树",      "tree"});
+    tag_repo->seed_tag({6, "图",      "graph"});
+    tag_repo->seed_tag({7, "动态规划","dp"});
+    tag_repo->seed_tag({8, "贪心",    "greedy"});
+    b.server->start();
+
+    auto res = make_client(19801).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19801 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    ASSERT_EQ(j["data"].size(), 8u);
+    for (const auto& t : j["data"]) {
+        ASSERT_TRUE(t.contains("id"))   << t.dump();
+        ASSERT_TRUE(t.contains("name")) << t.dump();
+        ASSERT_TRUE(t.contains("slug")) << t.dump();
+    }
+    for (int i = 0; i < 8; ++i) {
+        int got = j["data"][i]["id"].get<int>();
+        EXPECT_EQ(got, i + 1) << j["data"].dump();
+    }
+    EXPECT_EQ(j["data"][0]["name"], "数组");
+    EXPECT_EQ(j["data"][0]["slug"], "数组");
+    EXPECT_EQ(j["data"][1]["name"], "字符串");
+    EXPECT_EQ(j["data"][1]["slug"], "string");
+    EXPECT_EQ(j["data"][6]["name"], "动态规划");
+    EXPECT_EQ(j["data"][6]["slug"], "dp");
+    EXPECT_EQ(j["data"][7]["name"], "贪心");
+}
+
+TEST(ProblemTagsHandlerTest, EmptyRepoReturnsEmptyArray) {
+    ServerBundle b = make_server(19802);
+    b.server->start();
+    auto res = make_client(19802).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19802 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    ASSERT_TRUE(j["data"].is_array());
+    EXPECT_EQ(j["data"].size(), 0u);
+}
+
+TEST(ProblemTagsHandlerTest, DbDownReturns1008) {
+    ServerBundle b = make_server(19803);
+    b.db_ready->store(false, std::memory_order_release);
+    b.server->start();
+    auto res = make_client(19803).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19803 not reachable";
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j.value("code", -1), 1008);
+}
+
+TEST(ProblemTagsHandlerTest, PostReturns404) {
+    ServerBundle b = make_server(19804);
+    b.server->start();
+    auto res = make_client(19804).Post("/api/tags", "{}", "application/json");
+    if (!res) GTEST_SKIP() << "port 19804 not reachable";
+    EXPECT_EQ(res->status, 404);
+}
+
+TEST(ProblemTagsHandlerTest, PutReturns404) {
+    ServerBundle b = make_server(19805);
+    b.server->start();
+    auto res = make_client(19805).Put("/api/tags", "{}", "application/json");
+    if (!res) GTEST_SKIP() << "port 19805 not reachable";
+    EXPECT_EQ(res->status, 404);
+}
+
+TEST(ProblemTagsHandlerTest, DeleteReturns404) {
+    ServerBundle b = make_server(19806);
+    b.server->start();
+    auto res = make_client(19806).Delete("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19806 not reachable";
+    EXPECT_EQ(res->status, 404);
+}
+
+TEST(ProblemTagsHandlerTest, NoAuthHeaderRequired) {
+    ServerBundle b = make_server(19807);
+    auto tag_repo = std::static_pointer_cast<MinimalTagRepo>(b.service->tags_repo_for_test());
+    tag_repo->seed_tag({1, "数组", "数组"});
+    b.server->start();
+    auto res = make_client(19807).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19807 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j.value("code", -1), 0);
+    EXPECT_EQ(j["data"].size(), 1u);
+    EXPECT_EQ(j["data"][0]["name"], "数组");
+}
+
+TEST(ProblemTagsHandlerTest, ContentTypeIsApplicationJson) {
+    ServerBundle b = make_server(19808);
+    auto tag_repo = std::static_pointer_cast<MinimalTagRepo>(b.service->tags_repo_for_test());
+    tag_repo->seed_tag({1, "数组", "数组"});
+    b.server->start();
+    auto res = make_client(19808).Get("/api/tags");
+    if (!res) GTEST_SKIP() << "port 19808 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto ct = res->get_header_value("Content-Type");
+    EXPECT_NE(ct.find("application/json"), std::string::npos) << ct;
 }
 
 }  // namespace

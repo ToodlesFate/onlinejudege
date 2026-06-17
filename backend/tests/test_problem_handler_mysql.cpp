@@ -421,4 +421,65 @@ TEST_F(T, EndToEndDetailDbDownReturns1008) {
     EXPECT_EQ(j["code"].get<int>(), 1008);
 }
 
+// ===========================================================================
+//  GET /api/tags —— SPEC §5.2.2  端到端 (真 MySQL + 真 HttpServer)
+// ===========================================================================
+TEST_F(T, EndToEndTagsReturns8Presets) {
+    ScopedServer srv(19705);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return true; });
+    srv.start();
+
+    auto res = cli(19705).Get("/api/tags");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 0);
+    ASSERT_TRUE(j["data"].is_array());
+    // 种子数据里有 8 个 tag
+    ASSERT_EQ(j["data"].size(), 8u);
+    // 按 id ASC
+    for (int i = 0; i < 8; ++i) {
+        int got = j["data"][i]["id"].get<int>();
+        EXPECT_EQ(got, i + 1) << j["data"].dump();
+    }
+    // 字段形状
+    for (const auto& t : j["data"]) {
+        ASSERT_TRUE(t.contains("id"))   << t.dump();
+        ASSERT_TRUE(t.contains("name")) << t.dump();
+        ASSERT_TRUE(t.contains("slug")) << t.dump();
+    }
+    // 抽样校验（与 sql/002_seed.sql 一致）
+    EXPECT_EQ(j["data"][0]["name"], "数组");
+    EXPECT_EQ(j["data"][0]["slug"], "数组");
+    EXPECT_EQ(j["data"][1]["name"], "字符串");
+    EXPECT_EQ(j["data"][1]["slug"], "string");
+    EXPECT_EQ(j["data"][6]["name"], "动态规划");
+    EXPECT_EQ(j["data"][7]["name"], "贪心");
+}
+
+TEST_F(T, EndToEndTagsDbDownReturns1008) {
+    ScopedServer srv(19706);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return false; /* DB down */ });
+    srv.start();
+
+    auto res = cli(19706).Get("/api/tags");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+}
+
+TEST_F(T, EndToEndTagsPostReturns404) {
+    ScopedServer srv(19707);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return true; });
+    srv.start();
+
+    auto res = cli(19707).Post("/api/tags", "{}", "application/json");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 404);
+}
+
 }  // namespace

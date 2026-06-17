@@ -1245,7 +1245,7 @@ open http://localhost
 - [x] problems / testcases / tags 表 + Repo
 - [x] `GET /api/problems`（分页、过滤、排序）
 - [x] `GET /api/problems/{id}`（含样例点）
-- [ ] `GET /api/tags`
+- [x] `GET /api/tags`
 - [ ] 前端：题目列表页 + 题目详情页（Markdown 渲染 + Monaco 编辑器）
 - [ ] localStorage 草稿自动保存
 

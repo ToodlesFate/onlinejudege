@@ -182,5 +182,10 @@ ProblemService::get_detail(std::int64_t id, bool include_unpublished) {
     return d;
 }
 
+std::vector<Tag> ProblemService::list_tags() {
+    if (!tags_) return {};
+    return tags_->list_all();
+}
+
 }  // namespace oj::domain
 
