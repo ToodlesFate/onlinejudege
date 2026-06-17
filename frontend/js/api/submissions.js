@@ -81,10 +81,12 @@ export function get(id) {
  * @typedef {Object} SubmissionListItem
  * @property {number} id
  * @property {number} problem_id
- * @property {string} problem_title
+ * @property {string} problem_title     ← JOIN problems.title；problem 删则为空
+ * @property {number} user_id
+ * @property {string} username          ← JOIN users.username
  * @property {string} language
- * @property {string} status
- * @property {string|null} result
+ * @property {string} status            queued/compiling/running/finished
+ * @property {string|null} result       AC/WA/...（status=finished 时有值）
  * @property {number} total_score
  * @property {number} time_used_ms
  * @property {number} memory_used_kb
@@ -101,13 +103,14 @@ export function get(id) {
  */
 
 /**
- * 个人提交列表（需 Bearer）。
+ * 个人提交列表（需 Bearer；后端按 JWT user_id 过滤，query.user 仅 admin 可指定他人）。
  * @param {{
  *   page?: number,
  *   size?: number,
  *   problem_id?: number,
  *   language?: string,
  *   status?: string,           // queued/compiling/running/finished/AC/WA/...
+ *   user?: 'me'|number,        // 可选；非 admin 必须传 'me' 或自己 id
  * }} [q]
  * @returns {Promise<SubmissionListResult>}
  */
@@ -117,7 +120,27 @@ export function list(q = {}) {
     if (q.problem_id) query.problem_id = q.problem_id;
     if (q.language)   query.language   = q.language;
     if (q.status)     query.status     = q.status;
+    if (q.user != null) query.user     = String(q.user);
     return apiGet('/submissions', query);
+}
+
+/**
+ * 公共 AC 提交列表（无需鉴权）。
+ * 支持 problem_id / language 过滤；后端仅返回 result=AC。
+ * @param {{
+ *   page?: number,
+ *   size?: number,
+ *   problem_id?: number,
+ *   language?: string,
+ * }} [q]
+ * @returns {Promise<SubmissionListResult>}
+ */
+export function listPublic(q = {}) {
+    /** @type {Record<string, any>} */
+    const query = { page: q.page ?? 1, size: q.size ?? 20 };
+    if (q.problem_id) query.problem_id = q.problem_id;
+    if (q.language)   query.language   = q.language;
+    return apiGet('/submissions/public', query);
 }
 
 /**

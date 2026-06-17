@@ -151,13 +151,38 @@ struct JudgeTaskPayload {
 
 // ---------------------------------------------------------------------------
 //  SubmissionDetail —— get_full() 返回：submission 本体 + 提交人 username + cases 列表
-//  username 由 repo 在 get_full 时通过 LEFT JOIN users 表填充；
-//  列表视图（list_by_user / list_public_accepted）不需要 username。
+//  username 由 repo 在 get_full 时通过 LEFT JOIN users 表填充。
 // ---------------------------------------------------------------------------
 struct SubmissionDetail {
     Submission                  submission;
     std::string                 username;       // 提交人 username
     std::vector<SubmissionCase> cases;
+};
+
+// ---------------------------------------------------------------------------
+//  SubmissionListItem —— 列表视图的轻量行 (SPEC §2.4 / §5.2.3)
+//
+//  与 SubmissionDetail / Submission 的差别：
+//    1) 不含 code / compile_output / judge_message —— 列表里太大，详情页按需另拉
+//    2) 含 problem_title —— JOIN problems.title，列表页直接展示
+//    3) 含 username    —— JOIN users.username
+//       · list_by_user：填本人 username（一致即可）
+//       · list_public_accepted：填提交人 username，列表要展示
+// ---------------------------------------------------------------------------
+struct SubmissionListItem {
+    std::int64_t                 id{};
+    std::int64_t                 user_id{};
+    std::int64_t                 problem_id{};
+    std::string                  problem_title;   // ← 列表展示
+    std::string                  username;        // ← 列表展示 (公共列表)
+    Language                     language{Language::Cpp};
+    SubmissionStatus             status{SubmissionStatus::Queued};
+    std::optional<SubmissionResult> result;        // 终态才有
+    int                          total_score{0};
+    int                          time_used_ms{0};
+    int                          memory_used_kb{0};
+    std::string                  created_at;
+    std::string                  finished_at;     // 未完成时为空
 };
 
 // ---------------------------------------------------------------------------
@@ -173,7 +198,7 @@ struct SubmissionListQuery {
 };
 
 struct SubmissionListResult {
-    std::vector<Submission> items;
+    std::vector<SubmissionListItem> items;
     std::int64_t total{0};
     int page{0};
     int page_size{0};

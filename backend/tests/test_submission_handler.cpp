@@ -157,8 +157,63 @@ public:
                   });
         return d;
     }
-    SubmissionListResult list_by_user(const SubmissionListQuery&) override { return {}; }
-    SubmissionListResult list_public_accepted(const SubmissionListQuery&) override { return {}; }
+    SubmissionListResult list_by_user(const SubmissionListQuery& q) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        return build_list(q, /*public_only=*/false, /*user_id_override=*/0);
+    }
+    SubmissionListResult list_public_accepted(const SubmissionListQuery& q) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        return build_list(q, /*public_only=*/true, /*user_id_override=*/0);
+    }
+
+    // 共享 list 实现
+    SubmissionListResult build_list(const SubmissionListQuery& q,
+                                    bool public_only,
+                                    std::int64_t user_id_override) {
+        SubmissionListResult r;
+        r.page      = q.page;
+        r.page_size = q.page_size;
+        std::vector<Submission> matched;
+        for (const auto& s : rows_) {
+            if (public_only) {
+                if (s.status != SubmissionStatus::Finished) continue;
+                if (!s.result.has_value() || *s.result != SubmissionResult::AC) continue;
+            }
+            if (user_id_override > 0 && s.user_id != user_id_override) continue;
+            if (q.user_id > 0 && s.user_id != q.user_id) continue;
+            if (q.problem_id > 0 && s.problem_id != q.problem_id) continue;
+            if (q.language.has_value() && s.language != *q.language) continue;
+            if (q.status.has_value() && s.status != *q.status) continue;
+            matched.push_back(s);
+        }
+        r.total = static_cast<std::int64_t>(matched.size());
+        std::sort(matched.begin(), matched.end(),
+                  [](const Submission& a, const Submission& b) {
+                      if (a.created_at != b.created_at) return a.created_at > b.created_at;
+                      return a.id > b.id;
+                  });
+        const int offset = (q.page - 1) * q.page_size;
+        if (offset >= static_cast<int>(matched.size())) return r;
+        for (std::size_t i = offset; i < matched.size() && static_cast<int>(r.items.size()) < q.page_size; ++i) {
+            const Submission& s = matched[i];
+            oj::domain::SubmissionListItem it;
+            it.id              = s.id;
+            it.user_id         = s.user_id;
+            it.problem_id      = s.problem_id;
+            it.problem_title   = problem_title_of(s.problem_id);
+            it.username        = (s.user_id == 1) ? "alice" : (s.user_id == 2) ? "bob" : std::string{};
+            it.language        = s.language;
+            it.status          = s.status;
+            it.result          = s.result;
+            it.total_score     = s.total_score;
+            it.time_used_ms    = s.time_used_ms;
+            it.memory_used_kb  = s.memory_used_kb;
+            it.created_at      = s.created_at;
+            it.finished_at     = s.finished_at;
+            r.items.push_back(std::move(it));
+        }
+        return r;
+    }
 
     // 测试钩
     void set_result(std::int64_t id, SubmissionResult r, int score) {
@@ -181,12 +236,25 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         for (auto& s : rows_) if (s.id == sub_id) s.user_id = user_id;
     }
+    void set_problem_title(std::int64_t problem_id, std::string title) {
+        std::lock_guard<std::mutex> lk(mu_);
+        problem_titles_[problem_id] = std::move(title);
+    }
+    std::string problem_title_of(std::int64_t problem_id) const {
+        auto it = problem_titles_.find(problem_id);
+        return it != problem_titles_.end() ? it->second : std::string{};
+    }
+    void set_created_at(std::int64_t sub_id, const std::string& t) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto& s : rows_) if (s.id == sub_id) s.created_at = t;
+    }
 
 private:
-    std::mutex                  mu_;
-    std::vector<Submission>     rows_;
-    std::vector<SubmissionCase> cases_;
-    std::int64_t                next_id_{0};
+    std::mutex                            mu_;
+    std::vector<Submission>               rows_;
+    std::vector<SubmissionCase>           cases_;
+    std::int64_t                          next_id_{0};
+    std::map<std::int64_t, std::string>   problem_titles_;
 };
 
 class InMemoryProblemRepo : public IProblemRepository {
@@ -836,10 +904,12 @@ TEST(SubmissionHandlerTest, GetDbDownReturnsEnvelope) {
 }
 
 // ---- 错方法 ---------------------------------------------------------
+//  GET /api/submissions 现在是真实端点（个人列表）；
+//  改成 GET /api/submissionsx（拼写错的路径）以验证兜底
 TEST(SubmissionHandlerTest, GetOnCreatePathReturns404) {
     ServerBundle b = make_server(20240);
     b.server->start();
-    auto res = make_client(20240).Get("/api/submissions");
+    auto res = make_client(20240).Get("/api/submissionsx");
     if (!res) GTEST_SKIP() << "port 20240 not reachable";
     EXPECT_EQ(res->status, 404);
     auto j = nlohmann::json::parse(res->body);
@@ -854,6 +924,329 @@ TEST(SubmissionHandlerTest, PostOnDetailPathReturns404) {
     EXPECT_EQ(res->status, 404);
     auto j = nlohmann::json::parse(res->body);
     EXPECT_EQ(j["code"].get<int>(), 1004);
+}
+
+// ===========================================================================
+//  GET /api/submissions  —— 个人提交列表
+// ===========================================================================
+
+// ---- 鉴权 --------------------------------------------------------------
+TEST(SubmissionHandlerTest, ListRequiresBearerToken) {
+    ServerBundle b = make_server(20500);
+    b.server->start();
+    auto res = make_client(20500).Get("/api/submissions");
+    if (!res) GTEST_SKIP() << "port 20500 not reachable";
+    EXPECT_EQ(res->status, 401);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1002);
+}
+
+TEST(SubmissionHandlerTest, ListRejectsInvalidToken) {
+    ServerBundle b = make_server(20501);
+    b.server->start();
+    httplib::Headers h = {{"Authorization", "Bearer not.a.real.jwt"}};
+    auto res = make_client(20501).Get("/api/submissions", h);
+    if (!res) GTEST_SKIP() << "port 20501 not reachable";
+    EXPECT_EQ(res->status, 401);
+}
+
+// ---- DB 不可用 → 503/1008 -----------------------------------------------
+TEST(SubmissionHandlerTest, ListDbDownReturnsSystemError) {
+    ServerBundle b = make_server(20502);
+    b.server->start();
+    b.db_ready->store(false, std::memory_order_release);
+    auto res = make_client(20502).Get("/api/submissions",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20502 not reachable";
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+}
+
+// ---- 参数校验 --------------------------------------------------------
+TEST(SubmissionHandlerTest, ListInvalidPageReturns400) {
+    ServerBundle b = make_server(20503);
+    b.server->start();
+    auto res = make_client(20503).Get("/api/submissions?page=abc",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20503 not reachable";
+    EXPECT_EQ(res->status, 400);
+    EXPECT_EQ(nlohmann::json::parse(res->body)["code"].get<int>(), 1001);
+}
+
+TEST(SubmissionHandlerTest, ListNegativePageReturns400) {
+    ServerBundle b = make_server(20504);
+    b.server->start();
+    auto res = make_client(20504).Get("/api/submissions?page=0",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20504 not reachable";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(SubmissionHandlerTest, ListSizeOutOfRangeReturns400) {
+    ServerBundle b = make_server(20505);
+    b.server->start();
+    auto res = make_client(20505).Get("/api/submissions?size=999",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20505 not reachable";
+    EXPECT_EQ(res->status, 400);
+    EXPECT_EQ(nlohmann::json::parse(res->body)["code"].get<int>(), 1001);
+}
+
+TEST(SubmissionHandlerTest, ListInvalidLanguageReturns400) {
+    ServerBundle b = make_server(20506);
+    b.server->start();
+    auto res = make_client(20506).Get("/api/submissions?language=rust",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20506 not reachable";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(SubmissionHandlerTest, ListInvalidStatusReturns400) {
+    ServerBundle b = make_server(20507);
+    b.server->start();
+    auto res = make_client(20507).Get("/api/submissions?status=invalid",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20507 not reachable";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(SubmissionHandlerTest, ListNonAdminCannotSpecifyOtherUser) {
+    ServerBundle b = make_server(20508);
+    b.server->start();
+    auto res = make_client(20508).Get("/api/submissions?user=999",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20508 not reachable";
+    EXPECT_EQ(res->status, 403);
+    EXPECT_EQ(nlohmann::json::parse(res->body)["code"].get<int>(), 1003);
+}
+
+// ---- 业务逻辑 --------------------------------------------------------
+TEST(SubmissionHandlerTest, ListEmptyReturnsZeroTotalAndEmptyItems) {
+    ServerBundle b = make_server(20510);
+    b.server->start();
+    auto res = make_client(20510).Get("/api/submissions",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20510 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    const auto& d = j["data"];
+    EXPECT_EQ(d["total"].get<int>(), 0);
+    EXPECT_EQ(d["page"].get<int>(),  1);
+    EXPECT_EQ(d["size"].get<int>(),  20);
+    EXPECT_TRUE(d["items"].is_array());
+    EXPECT_EQ(d["items"].size(), 0u);
+}
+
+TEST(SubmissionHandlerTest, ListFiltersByRequesterIdNotQueryUserId) {
+    ServerBundle b = make_server(20511);
+    b.problems->add(mk_problem(true));
+    b.submissions->set_problem_title(1, "两数之和");
+    // user 1 提交 2 个
+    b.submissions->create(1, 1, Language::Cpp, "a");
+    b.submissions->create(1, 1, Language::Cpp, "b");
+    // user 2 提交 1 个
+    b.submissions->create(2, 1, Language::Cpp, "c");
+    b.server->start();
+
+    // user 1 看自己的 → 2 个
+    auto res = make_client(20511).Get("/api/submissions",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20511 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["total"].get<int>(), 2);
+    for (const auto& it : j["data"]["items"]) {
+        EXPECT_EQ(it["user_id"].get<int>(), 1);
+    }
+
+    // user 2 看自己的 → 1 个
+    auto res2 = make_client(20511).Get("/api/submissions",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 2, false)}});
+    if (!res2) GTEST_SKIP() << "port 20511 not reachable";
+    EXPECT_EQ(nlohmann::json::parse(res2->body)["data"]["total"].get<int>(), 1);
+}
+
+TEST(SubmissionHandlerTest, ListReturnsAllListItemFields) {
+    ServerBundle b = make_server(20512);
+    b.problems->add(mk_problem(true));
+    b.submissions->set_problem_title(1, "两数之和");
+    auto id = b.submissions->create(1, 1, Language::Java, "x");
+    b.submissions->finish(id, SubmissionResult::AC, 100, 12, 2048, "", "");
+    b.server->start();
+
+    auto res = make_client(20512).Get("/api/submissions",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20512 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    const auto& items = j["data"]["items"];
+    ASSERT_EQ(items.size(), 1u);
+    const auto& it = items[0];
+    for (const char* k : {"id", "problem_id", "problem_title", "user_id",
+                          "username", "language", "status", "result",
+                          "total_score", "time_used_ms", "memory_used_kb",
+                          "created_at", "finished_at"}) {
+        EXPECT_TRUE(it.contains(k)) << "missing field: " << k;
+    }
+    EXPECT_EQ(it["id"].get<int>(),              id);
+    EXPECT_EQ(it["problem_id"].get<int>(),      1);
+    EXPECT_EQ(it["problem_title"].get<std::string>(), "两数之和");
+    EXPECT_EQ(it["user_id"].get<int>(),         1);
+    EXPECT_EQ(it["username"].get<std::string>(), "alice");
+    EXPECT_EQ(it["language"].get<std::string>(), "java");
+    EXPECT_EQ(it["status"].get<std::string>(),  "finished");
+    EXPECT_EQ(it["result"].get<std::string>(),  "AC");
+    EXPECT_EQ(it["total_score"].get<int>(),     100);
+    EXPECT_EQ(it["time_used_ms"].get<int>(),    12);
+    EXPECT_EQ(it["memory_used_kb"].get<int>(),  2048);
+}
+
+TEST(SubmissionHandlerTest, ListAdminCanSpecifyOtherUser) {
+    ServerBundle b = make_server(20513);
+    b.problems->add(mk_problem(true));
+    b.submissions->create(1, 1, Language::Cpp, "a");
+    b.submissions->create(2, 1, Language::Cpp, "b");
+    b.server->start();
+
+    // admin 看 user 1 的列表
+    auto res = make_client(20513).Get("/api/submissions?user=1",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 99, /*admin=*/true)}});
+    if (!res) GTEST_SKIP() << "port 20513 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["total"].get<int>(), 1);
+    EXPECT_EQ(j["data"]["items"][0]["user_id"].get<int>(), 1);
+}
+
+TEST(SubmissionHandlerTest, ListUserMeAliasWorks) {
+    ServerBundle b = make_server(20514);
+    b.problems->add(mk_problem(true));
+    b.submissions->create(1, 1, Language::Cpp, "a");
+    b.server->start();
+
+    auto res = make_client(20514).Get("/api/submissions?user=me",
+        {{"Authorization", "Bearer " + access_token(*b.jwt, 1, false)}});
+    if (!res) GTEST_SKIP() << "port 20514 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["total"].get<int>(), 1);
+}
+
+// ===========================================================================
+//  GET /api/submissions/public  —— 公共 AC 提交列表
+// ===========================================================================
+
+TEST(SubmissionHandlerTest, PublicListDoesNotRequireAuth) {
+    ServerBundle b = make_server(20600);
+    b.server->start();
+    // 不带 token 也能访问
+    auto res = make_client(20600).Get("/api/submissions/public");
+    if (!res) GTEST_SKIP() << "port 20600 not reachable";
+    EXPECT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["total"].get<int>(), 0);
+}
+
+TEST(SubmissionHandlerTest, PublicListExcludesNonAC) {
+    ServerBundle b = make_server(20601);
+    b.problems->add(mk_problem(true));
+    b.submissions->set_problem_title(1, "两数之和");
+    // 2 AC + 1 WA + 1 未完成
+    auto id1 = b.submissions->create(1, 1, Language::Cpp, "a");
+    auto id2 = b.submissions->create(2, 1, Language::Cpp, "b");
+    auto id3 = b.submissions->create(1, 1, Language::Cpp, "c");
+    b.submissions->finish(id1, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.submissions->finish(id2, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.submissions->finish(id3, SubmissionResult::WA,  60,  1, 1, "", "");
+    b.server->start();
+
+    auto res = make_client(20601).Get("/api/submissions/public");
+    if (!res) GTEST_SKIP() << "port 20601 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    const auto& d = j["data"];
+    EXPECT_EQ(d["total"].get<int>(), 2);
+    for (const auto& it : d["items"]) {
+        EXPECT_EQ(it["result"].get<std::string>(), "AC");
+        EXPECT_EQ(it["status"].get<std::string>(), "finished");
+    }
+}
+
+TEST(SubmissionHandlerTest, PublicListReturnsUsernameAndProblemTitle) {
+    ServerBundle b = make_server(20602);
+    b.problems->add(mk_problem(true));
+    b.submissions->set_problem_title(1, "两数之和");
+    auto id = b.submissions->create(1, 1, Language::Cpp, "a");
+    b.submissions->finish(id, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.server->start();
+
+    auto res = make_client(20602).Get("/api/submissions/public");
+    if (!res) GTEST_SKIP() << "port 20602 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    ASSERT_EQ(j["data"]["items"].size(), 1u);
+    const auto& it = j["data"]["items"][0];
+    EXPECT_EQ(it["username"].get<std::string>(),       "alice");
+    EXPECT_EQ(it["problem_title"].get<std::string>(),  "两数之和");
+}
+
+TEST(SubmissionHandlerTest, PublicListDbDownReturnsSystemError) {
+    ServerBundle b = make_server(20603);
+    b.server->start();
+    b.db_ready->store(false, std::memory_order_release);
+    auto res = make_client(20603).Get("/api/submissions/public");
+    if (!res) GTEST_SKIP() << "port 20603 not reachable";
+    EXPECT_EQ(res->status, 500);
+    EXPECT_EQ(nlohmann::json::parse(res->body)["code"].get<int>(), 1008);
+}
+
+TEST(SubmissionHandlerTest, PublicListInvalidPageReturns400) {
+    ServerBundle b = make_server(20604);
+    b.server->start();
+    auto res = make_client(20604).Get("/api/submissions/public?page=abc");
+    if (!res) GTEST_SKIP() << "port 20604 not reachable";
+    EXPECT_EQ(res->status, 400);
+    EXPECT_EQ(nlohmann::json::parse(res->body)["code"].get<int>(), 1001);
+}
+
+TEST(SubmissionHandlerTest, PublicListInvalidLanguageReturns400) {
+    ServerBundle b = make_server(20605);
+    b.server->start();
+    auto res = make_client(20605).Get("/api/submissions/public?language=rust");
+    if (!res) GTEST_SKIP() << "port 20605 not reachable";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(SubmissionHandlerTest, PublicListPaginatesCorrectly) {
+    ServerBundle b = make_server(20606);
+    b.problems->add(mk_problem(true));
+    // 25 个 AC，分 2 页：page=1 size=10 → 10 个；page=3 size=10 → 5 个
+    for (int i = 0; i < 25; ++i) {
+        auto id = b.submissions->create(1, 1, Language::Cpp, "x");
+        b.submissions->finish(id, SubmissionResult::AC, 100, 1, 1, "", "");
+    }
+    b.server->start();
+
+    auto r1 = make_client(20606).Get("/api/submissions/public?page=1&size=10");
+    if (!r1) GTEST_SKIP() << "port 20606 not reachable";
+    EXPECT_EQ(nlohmann::json::parse(r1->body)["data"]["items"].size(), 10u);
+
+    auto r2 = make_client(20606).Get("/api/submissions/public?page=3&size=10");
+    if (!r2) GTEST_SKIP() << "port 20606 not reachable";
+    auto j2 = nlohmann::json::parse(r2->body);
+    EXPECT_EQ(j2["data"]["total"].get<int>(), 25);
+    EXPECT_EQ(j2["data"]["items"].size(),     5u);
+}
+
+// ---- 路由顺序：/public 必须在 /:id 之前 -------------------------------
+TEST(SubmissionHandlerTest, PublicRouteDoesNotMatchAsDetailId) {
+    ServerBundle b = make_server(20607);
+    b.server->start();
+    // /api/submissions/public 不应被 detail handler 当作 :id="public"
+    auto res = make_client(20607).Get("/api/submissions/public");
+    if (!res) GTEST_SKIP() << "port 20607 not reachable";
+    EXPECT_EQ(res->status, 200);   // 200 = public 端点命中；非 400（:id 非法）
 }
 
 }  // namespace

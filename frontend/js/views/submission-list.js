@@ -1,23 +1,33 @@
 // =============================================================================
-//  views/submission-list.js — 个人提交列表 (SPEC §3.3.5 I)
+//  views/submission-list.js — 提交列表 (个人 / 公共) (SPEC §2.4 / §3.3.5 I)
+//
+//  两种 scope：
+//    1) 我的提交 (scope=mine, 默认)
+//       - /api/submissions (Bearer 鉴权)
+//       - 可按 problem_id / language / status 过滤
+//    2) 公共 AC 提交 (scope=public)
+//       - /api/submissions/public (无鉴权)
+//       - 仅展示 result=AC 的提交
+//       - 多一列「用户」，少一列「操作」按钮（行整行可点击）
 //
 //  布局：
 //    Header
 //    过滤条：[题目▼] [语言▼] [状态▼]        共 N 条
-//    表格：  ID │ 题目 │ 语言 │ 状态 │ 分数 │ 耗时 │ 内存 │ 时间 │ 操作
+//    表格：  ID │ 题目 │ (用户) │ 语言 │ 状态 │ 分数 │ 耗时 │ 内存 │ 时间 │ (操作)
 //    分页
 //
 //  行为：
 //    - 过滤条件变化 → debounce 300ms → 重查
 //    - 表格行点击 → 跳 /submissions/:id
 //    - 时间列：相对时间 + hover 显示绝对时间
+//    - scope 通过 ?scope=public 切换；无 scope 时按 mine
 //
-//  URL 同步：?page=&problem_id=&language=&status=
-//  鉴权：   需要登录；未登录跳 /login?redirect=...
+//  URL 同步：?page=&problem_id=&language=&status=&scope=
+//  鉴权：mine scope 需要登录；未登录跳 /login?redirect=...
 // =============================================================================
 
 import { createEl, loading, empty, errorBanner, pagination, statusBadge } from '../utils/dom.js';
-import { list as apiList } from '../api/submissions.js';
+import { list as apiList, listPublic as apiListPublic } from '../api/submissions.js';
 import { authStore } from '../store/state.js';
 import { navigate } from '../router.js';
 import { formatTime, formatMemory, formatDateTime, relativeTime } from '../utils/format.js';
@@ -36,6 +46,8 @@ const LANG_OPTIONS = [
 ];
 
 // 8 态 + 4 状态枚举（status=queued/compiling/running/finished + result=AC/WA/...）
+//   - mine scope：4 态 + 8 态 都能筛
+//   - public scope：永远只 AC，所以这层 filter 在 UI 上仍展示但后端忽略 status
 const STATUS_OPTIONS = [
     { v: '',          label: '全部状态' },
     { v: 'queued',    label: '排队中' },
@@ -49,12 +61,15 @@ const STATUS_OPTIONS = [
     { v: 'OLE',       label: '输出超限' },
     { v: 'RE',        label: '运行错误' },
     { v: 'CE',        label: '编译错误' },
-    { v: 'SE',        label: '系统错误' },
+    { v: 'SE',       label: '系统错误' },
 ];
 
 export default async function submissionListView(_params, query) {
-    // 未登录 → 跳登录
-    if (!authStore.isLoggedIn) {
+    // 解析 scope —— ?scope=public 切到公共视图
+    const scope = query.get('scope') === 'public' ? 'public' : 'mine';
+
+    // mine scope：未登录 → 跳登录
+    if (scope === 'mine' && !authStore.isLoggedIn) {
         navigate('/login?redirect=' + encodeURIComponent('/submissions'));
         return createEl('div', { class: 'view container' });
     }
@@ -63,13 +78,29 @@ export default async function submissionListView(_params, query) {
 
     const header = createEl('div', { class: 'view__header' }, [
         createEl('div', null, [
-            createEl('h1', { class: 'view__title' }, '我的提交'),
-            createEl('p',  { class: 'view__subtitle' }, '按时间倒序展示你的所有提交记录'),
+            createEl('h1', { class: 'view__title' },
+                scope === 'public' ? '公共提交' : '我的提交'),
+            createEl('p',  { class: 'view__subtitle' },
+                scope === 'public'
+                    ? '所有用户的 AC 通过记录，按时间倒序展示'
+                    : '按时间倒序展示你的所有提交记录'),
+        ]),
+        createEl('div', null, [
+            scope === 'public'
+                ? createEl('a', {
+                    class: 'btn btn--ghost btn--sm',
+                    href: '/submissions',
+                }, '← 我的提交')
+                : createEl('a', {
+                    class: 'btn btn--ghost btn--sm',
+                    href: '/submissions?scope=public',
+                }, '公共 AC 提交 →'),
         ]),
     ]);
     root.appendChild(header);
 
     const state = {
+        scope,
         page:       parseInt(query.get('page') || '1', 10) || 1,
         size:       PAGE_SIZE,
         problem_id: query.get('problem_id') || '',
@@ -158,10 +189,11 @@ export default async function submissionListView(_params, query) {
 
     function syncUrl() {
         const sp = new URLSearchParams();
-        if (state.page > 1) sp.set('page', state.page);
-        if (state.problem_id) sp.set('problem_id', state.problem_id);
-        if (state.language) sp.set('language', state.language);
-        if (state.status) sp.set('status', state.status);
+        if (state.scope !== 'mine') sp.set('scope', state.scope);
+        if (state.page > 1)        sp.set('page', String(state.page));
+        if (state.problem_id)      sp.set('problem_id', state.problem_id);
+        if (state.language)        sp.set('language', state.language);
+        if (state.status)          sp.set('status', state.status);
         const qs = sp.toString();
         const url = '/submissions' + (qs ? '?' + qs : '');
         if (location.pathname + location.search !== url) {
@@ -177,9 +209,12 @@ export default async function submissionListView(_params, query) {
         };
         if (state.problem_id) q.problem_id = state.problem_id;
         if (state.language)   q.language   = state.language;
-        if (state.status)     q.status     = state.status;
+        // status 仅在 mine scope 有意义（public 后端只返 AC）
+        if (state.status && state.scope === 'mine') q.status = state.status;
         try {
-            lastResult = await apiList(q);
+            lastResult = (state.scope === 'public')
+                ? await apiListPublic(q)
+                : await apiList(q);
             renderTable();
         } catch (err) {
             statusHost.replaceChildren(errorBanner('加载失败：' + (err && err.message || err), {
@@ -196,30 +231,30 @@ export default async function submissionListView(_params, query) {
             statusHost.appendChild(empty({
                 icon: '∅',
                 title: '暂无提交',
-                hint: '调整过滤条件，或前往题库提交你的第一份代码',
-                action: { label: '去题库', href: '/problems' },
+                hint: state.scope === 'public'
+                    ? '全站还没有 AC 提交记录'
+                    : '调整过滤条件，或前往题库提交你的第一份代码',
+                action: state.scope === 'public'
+                    ? undefined
+                    : { label: '去题库', href: '/problems' },
             }));
             return;
         }
 
         // 顶部计数条
         const total = lastResult.total || 0;
-        const topBar = createEl('div', { class: 'sl-top muted' }, `共 ${total} 条`);
+        const topBar = createEl('div', { class: 'sl-top muted' },
+            state.scope === 'public'
+                ? `共 ${total} 条 AC 通过记录`
+                : `共 ${total} 条`);
         statusHost.appendChild(topBar);
 
         const table = createEl('table', { class: 'table sl-table' });
+        const headers = state.scope === 'public'
+            ? ['ID', '题目', '用户', '语言', '状态', '分数', '耗时', '内存', '时间']
+            : ['ID', '题目', '语言', '状态', '分数', '耗时', '内存', '时间', '操作'];
         const thead = createEl('thead', null, [
-            createEl('tr', null, [
-                createEl('th', null, 'ID'),
-                createEl('th', null, '题目'),
-                createEl('th', null, '语言'),
-                createEl('th', null, '状态'),
-                createEl('th', null, '分数'),
-                createEl('th', null, '耗时'),
-                createEl('th', null, '内存'),
-                createEl('th', null, '时间'),
-                createEl('th', null, '操作'),
-            ]),
+            createEl('tr', null, headers.map(h => createEl('th', null, h))),
         ]);
         table.appendChild(thead);
         const tbody = createEl('tbody');
@@ -230,6 +265,9 @@ export default async function submissionListView(_params, query) {
             });
             tr.appendChild(createEl('td', null, `#${s.id}`));
             tr.appendChild(createEl('td', null, s.problem_title || `#${s.problem_id}`));
+            if (state.scope === 'public') {
+                tr.appendChild(createEl('td', null, s.username || `id:${s.user_id}`));
+            }
             const L = LANG_BY_ID[s.language] || {};
             tr.appendChild(createEl('td', null, L.label || s.language));
             tr.appendChild(createEl('td', null, statusBadge(s.result || s.status)));
@@ -239,12 +277,14 @@ export default async function submissionListView(_params, query) {
             const tCell = createEl('td', null, relativeTime(s.created_at));
             tCell.title = formatDateTime(s.created_at);
             tr.appendChild(tCell);
-            tr.appendChild(createEl('td', null, [
-                createEl('a', {
-                    href: '/submissions/' + s.id,
-                    onClick: (e) => { e.stopPropagation(); },
-                }, '查看'),
-            ]));
+            if (state.scope === 'mine') {
+                tr.appendChild(createEl('td', null, [
+                    createEl('a', {
+                        href: '/submissions/' + s.id,
+                        onClick: (e) => { e.stopPropagation(); },
+                    }, '查看'),
+                ]));
+            }
             tbody.appendChild(tr);
         }
         table.appendChild(tbody);

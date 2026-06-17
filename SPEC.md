@@ -1265,7 +1265,7 @@ open http://localhost
 - [x] 测试点动态增删 + 校验总分 = 100
 
 ### Phases 6 - 提交历史 + 详情
-- [ ] 提交列表（个人 / 公共）
+- [x] 提交列表（个人 / 公共） (详见 §9.9 / `docs/phase6-1-verification.md`)
 - [ ] 提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff
 
 ### Phases 7 - 打磨与验收
@@ -1498,6 +1498,50 @@ open http://localhost
 | `docs/phase5-verification.md` | 新增 | 本次验收报告 |
 
 **结论**：Phase 5「后台管理」全部三项完成。进入 Phase 6（提交历史 + 详情）。
+
+---
+
+### 9.9 Phase 6 — 提交列表（个人 / 公共）（已通过）
+> 触发条件：SPEC §8 TODO「Phases 6 - 提交历史 + 详情」第 1 项已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与单元测试矩阵见
+> [`docs/phase6-1-verification.md`](docs/phase6-1-verification.md)。
+
+**验证时间**：2026-06-17
+**验证环境**：Linux x86_64 / GCC 13.3 / Debian 12 (bookworm) / Node 24
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 6-1a | `GET /api/submissions` 接口契约 | `submission_handler.cpp:handle_list` + 13 字段 `SubmissionListItem` JSON 形状 | ✅ |
+| 6-1b | `GET /api/submissions/public` 接口契约 | `submission_handler.cpp:handle_list_public`（无鉴权） | ✅ |
+| 6-1c | 个人列表强制 `user_id = requester_id` | `SubmissionService::list_by_user` 覆盖；22 项测试覆盖 | ✅ |
+| 6-1d | 公共列表仅 `result='AC' AND status='finished'` | SQL `WHERE s.result='AC' AND s.status='finished'` | ✅ |
+| 6-1e | **AC-17**：分页正确 | 22 项 HTTP 测试 + 44 项前端测试 | ✅ |
+| 6-1f | **AC-18**：AC 公开 / 非 AC 仅自己 | `get_detail` 已有可见性规则 + 新 public 端点 | ✅ |
+| 6-1g | 公共列表含 `username` + `problem_title` | LEFT JOIN users / problems + 11 项字段测试 | ✅ |
+| 6-1h | 路由顺序：`/public` 先于 `/:id` | 测试 `PublicRouteDoesNotMatchAsDetailId` | ✅ |
+| 6-1i | 视图双 scope：mine / public | `submission-list.js` + 44 项前端测试 | ✅ |
+| 6-1j | JS 语法 + 全部前端单测 146/146 通过 | `node --check` + 6 个 test 文件全过 | ✅ |
+| 6-1k | 全部非 MySQL 后端测试 554/554 通过 | `./build/oj_unit_tests` 稳定通过 | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `backend/include/domain/submission_types.hpp` | 修改 | `SubmissionListItem` 结构体 |
+| `backend/src/infra/submission_repo.cpp` | 修改 | list SQL 加 LEFT JOIN problems / users |
+| `backend/include/domain/submission_service.hpp` | 修改 | `ISubmissionService` 加 list 接口 |
+| `backend/src/domain/submission_service.cpp` | 修改 | `list_by_user` 强制覆盖 user_id |
+| `backend/src/http/handlers/submission_handler.cpp` | 修改 | handle_list + handle_list_public + 路由 |
+| `backend/tests/test_submission_handler.cpp` | 修改 | +22 项 HTTP 集成测试 |
+| `backend/tests/test_submission_service.cpp` | 修改 | +9 项 service 单测 |
+| `frontend/js/api/submissions.js` | 修改 | `list()` 支持 user；`listPublic()` 支持过滤 |
+| `frontend/js/views/submission-list.js` | 重写 | 双 scope 视图 |
+| `frontend/tests/submission-list.test.mjs` | 新增 | 44 项纯逻辑测试 |
+| `docs/phase6-1-verification.md` | 新增 | 本次验收报告 |
+
+**结论**：Phase 6 第 1 项「提交列表（个人 / 公共）」通过验收，
+进入下一项「提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff」。
 
 ---
 

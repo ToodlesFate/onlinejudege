@@ -138,4 +138,50 @@ std::optional<SubmissionDetail> SubmissionService::get_detail(
     return detail;
 }
 
+// ---------------------------------------------------------------------------
+//  list_by_user
+//
+//  流程：
+//    1) 把 requester_id 注入到 query.user_id（个人列表就是当前用户）
+//    2) 委托 repo->list_by_user
+//
+//  鉴权：调用方（handler）已经保证 requester_id > 0（即已登录）
+//  业务校验：page / page_size 由 repo 兜底（<=0 抛）
+// ---------------------------------------------------------------------------
+SubmissionListResult SubmissionService::list_by_user(
+    std::int64_t requester_id,
+    const SubmissionListQuery& q_in)
+{
+    if (requester_id <= 0) {
+        // 个人列表必须知道是谁；调用方（handler）已在鉴权阶段拒绝匿名
+        // 这里再兜底一次，防止 service 被误用
+        throw std::runtime_error("SubmissionService::list_by_user: requester_id required");
+    }
+    SubmissionListQuery q = q_in;
+    q.user_id = requester_id;       // 强制覆盖：个人列表只能是本人
+    try {
+        return submissions_->list_by_user(q);
+    } catch (const std::exception& e) {
+        spdlog::error("SubmissionService::list_by_user err: {}", e.what());
+        throw;
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  list_public_accepted
+//
+//  流程：直接委托 repo
+//  鉴权：调用方未鉴权也允许（公共 AC 提交）
+// ---------------------------------------------------------------------------
+SubmissionListResult SubmissionService::list_public_accepted(
+    const SubmissionListQuery& q)
+{
+    try {
+        return submissions_->list_public_accepted(q);
+    } catch (const std::exception& e) {
+        spdlog::error("SubmissionService::list_public_accepted err: {}", e.what());
+        throw;
+    }
+}
+
 }  // namespace oj::domain

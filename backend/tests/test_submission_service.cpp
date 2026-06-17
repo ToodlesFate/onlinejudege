@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -132,16 +133,86 @@ public:
                   });
         return d;
     }
-    SubmissionListResult list_by_user(const SubmissionListQuery&) override { return {}; }
-    SubmissionListResult list_public_accepted(const SubmissionListQuery&) override { return {}; }
+    SubmissionListResult list_by_user(const SubmissionListQuery& q) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        return build_list(q, /*public_only=*/false, /*user_id_override=*/0);
+    }
+    SubmissionListResult list_public_accepted(const SubmissionListQuery& q) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        return build_list(q, /*public_only=*/true, /*user_id_override=*/0);
+    }
+
+    // 共享 list 实现
+    SubmissionListResult build_list(const SubmissionListQuery& q,
+                                    bool public_only,
+                                    std::int64_t user_id_override) {
+        if (throw_on_list_) throw std::runtime_error("synthetic list failure");
+        SubmissionListResult r;
+        r.page      = q.page;
+        r.page_size = q.page_size;
+        std::vector<Submission> matched;
+        for (const auto& s : rows_) {
+            if (public_only) {
+                if (s.status != SubmissionStatus::Finished) continue;
+                if (!s.result.has_value() || *s.result != SubmissionResult::AC) continue;
+            }
+            if (user_id_override > 0 && s.user_id != user_id_override) continue;
+            if (q.user_id > 0 && s.user_id != q.user_id) continue;
+            if (q.problem_id > 0 && s.problem_id != q.problem_id) continue;
+            if (q.language.has_value() && s.language != *q.language) continue;
+            if (q.status.has_value() && s.status != *q.status) continue;
+            matched.push_back(s);
+        }
+        r.total = static_cast<std::int64_t>(matched.size());
+        std::sort(matched.begin(), matched.end(),
+                  [](const Submission& a, const Submission& b) {
+                      if (a.created_at != b.created_at) return a.created_at > b.created_at;
+                      return a.id > b.id;
+                  });
+        const int offset = (q.page - 1) * q.page_size;
+        if (offset >= static_cast<int>(matched.size())) return r;
+        for (std::size_t i = offset; i < matched.size() && static_cast<int>(r.items.size()) < q.page_size; ++i) {
+            const Submission& s = matched[i];
+            oj::domain::SubmissionListItem it;
+            it.id              = s.id;
+            it.user_id         = s.user_id;
+            it.problem_id      = s.problem_id;
+            it.problem_title   = problem_title_of(s.problem_id);
+            it.username        = (s.user_id == 1) ? "alice" : (s.user_id == 2) ? "bob" : std::string{};
+            it.language        = s.language;
+            it.status          = s.status;
+            it.result          = s.result;
+            it.total_score     = s.total_score;
+            it.time_used_ms    = s.time_used_ms;
+            it.memory_used_kb  = s.memory_used_kb;
+            it.created_at      = s.created_at;
+            it.finished_at     = s.finished_at;
+            r.items.push_back(std::move(it));
+        }
+        return r;
+    }
 
     // 测试钩：注入失败
     void set_throw_on_create(bool v)    { throw_on_create_    = v; }
     void set_throw_on_get_full(bool v)  { throw_on_get_full_  = v; }
+    void set_throw_on_list(bool v)      { throw_on_list_      = v; }
+    void set_problem_title(std::int64_t problem_id, std::string title) {
+        std::lock_guard<std::mutex> lk(mu_);
+        problem_titles_[problem_id] = std::move(title);
+    }
+    std::string problem_title_of(std::int64_t problem_id) const {
+        // 不加锁（仅在已持锁处调用）
+        auto it = problem_titles_.find(problem_id);
+        return it != problem_titles_.end() ? it->second : std::string{};
+    }
     void add_case(std::int64_t sub_id, SubmissionCase c) {
         std::lock_guard<std::mutex> lk(mu_);
         c.submission_id = sub_id;
         cases_.push_back(std::move(c));
+    }
+    void set_created_at(std::int64_t sub_id, const std::string& t) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto& s : rows_) if (s.id == sub_id) s.created_at = t;
     }
 
 private:
@@ -151,6 +222,8 @@ private:
     std::int64_t                     next_id_{0};
     bool                             throw_on_create_{false};
     bool                             throw_on_get_full_{false};
+    bool                             throw_on_list_{false};
+    std::map<std::int64_t, std::string> problem_titles_;
 };
 
 // ---------------------------------------------------------------------------
@@ -242,11 +315,21 @@ struct ServiceBundle {
     std::shared_ptr<SubmissionService>       service;
 };
 
+// 简单的回调：让 InMemoryProblemRepo add() 时把 (id, title) 推给 InMemorySubmissionRepo
+// —— 模拟 SQL JOIN 行为。
+static void wire_problem_titles(InMemoryProblemRepo* p, InMemorySubmissionRepo* s) {
+    // 测试通过 ServiceBundle.problems->add(p) 添加题目；
+    // 我们用 hook：add 之后 p->rows_ 已经更新了 title
+    // 简化做法：提供一个专门的 set_problem_title 接口供测试用
+    (void)p; (void)s;
+}
+
 ServiceBundle make_service(int code_max = 65536) {
     ServiceBundle b;
     b.submissions = std::make_shared<InMemorySubmissionRepo>();
     b.problems    = std::make_shared<InMemoryProblemRepo>();
     b.testcases   = std::make_shared<InMemoryTestcaseRepo>();
+    wire_problem_titles(b.problems.get(), b.submissions.get());
     b.service     = std::make_shared<SubmissionService>(
         b.submissions, b.problems, b.testcases, code_max);
     return b;
@@ -516,6 +599,167 @@ TEST(SubmissionServiceTest, GetDetailFillsSampleCaseInputAndExpected) {
     EXPECT_TRUE(d->cases[1].input.empty());
     EXPECT_TRUE(d->cases[1].expected_output.empty());
     EXPECT_TRUE(d->cases[1].user_output.empty());
+}
+
+// ===========================================================================
+//  list_by_user —— 强制 user_id = requester_id（个人列表只能是本人）
+// ===========================================================================
+TEST(SubmissionServiceTest, ListByUserRequiresValidRequesterId) {
+    auto b = make_service();
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    EXPECT_THROW(b.service->list_by_user(/*requester_id=*/0, q),
+                 std::runtime_error);
+    EXPECT_THROW(b.service->list_by_user(/*requester_id=*/-1, q),
+                 std::runtime_error);
+}
+
+TEST(SubmissionServiceTest, ListByUserIgnoresQueryUserIdAndForcesRequesterId) {
+    auto b = make_service();
+    b.problems->add(mk_problem(true));
+    // 2 个 user_id=1 的 submission，1 个 user_id=2 的 submission
+    auto id1 = b.service->create(1, 1, Language::Cpp, "a");
+    auto id2 = b.service->create(1, 1, Language::Cpp, "b");
+    auto id3 = b.service->create(2, 1, Language::Cpp, "c");
+
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    q.user_id = 2;    // 试图用 user_id=2 偷看 user_id=1 的列表
+
+    auto r = b.service->list_by_user(/*requester_id=*/1, q);
+    EXPECT_EQ(r.total, 2);
+    for (const auto& it : r.items) {
+        EXPECT_EQ(it.user_id, 1);   // 强制覆盖：只返回 user_id=1 的
+    }
+
+    // user_id=2 看自己的
+    auto r2 = b.service->list_by_user(/*requester_id=*/2, q);
+    EXPECT_EQ(r2.total, 1);
+    EXPECT_EQ(r2.items[0].user_id, 2);
+}
+
+TEST(SubmissionServiceTest, ListByUserReturnsFieldsWithProblemTitleAndUsername) {
+    auto b = make_service();
+    auto p = mk_problem(true);
+    p.title = "两数之和";
+    b.problems->add(p);
+    // 把 title 同步给 submission repo（模拟 SQL JOIN）
+    // 注意：service->create() 用的是 problem_id=1，repo->add() 后 p.id 也是 1
+    b.submissions->set_problem_title(1, "两数之和");
+    auto id = b.service->create(1, 1, Language::Java, "x");
+    b.submissions->finish(id, SubmissionResult::AC, 100, 12, 2048, "", "");
+
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    auto r = b.service->list_by_user(1, q);
+    ASSERT_EQ(r.items.size(), 1u);
+    EXPECT_EQ(r.items[0].id,             id);
+    EXPECT_EQ(r.items[0].user_id,        1);
+    EXPECT_EQ(r.items[0].problem_id,     1);
+    EXPECT_EQ(r.items[0].problem_title,  "两数之和");
+    EXPECT_EQ(r.items[0].username,       "alice");
+    EXPECT_EQ(r.items[0].language,       Language::Java);
+    EXPECT_EQ(r.items[0].status,         SubmissionStatus::Finished);
+    ASSERT_TRUE(r.items[0].result.has_value());
+    EXPECT_EQ(*r.items[0].result,        SubmissionResult::AC);
+    EXPECT_EQ(r.items[0].total_score,    100);
+    EXPECT_EQ(r.items[0].time_used_ms,   12);
+    EXPECT_EQ(r.items[0].memory_used_kb, 2048);
+}
+
+TEST(SubmissionServiceTest, ListByUserFiltersByLanguageAndStatus) {
+    auto b = make_service();
+    b.problems->add(mk_problem(true));
+    auto id1 = b.service->create(1, 1, Language::Cpp,    "a");
+    auto id2 = b.service->create(1, 1, Language::Java,   "b");
+    auto id3 = b.service->create(1, 1, Language::Python, "c");
+    b.submissions->finish(id1, SubmissionResult::AC,  100, 1, 1, "", "");
+    // id2 保持 Queued
+    b.submissions->finish(id3, SubmissionResult::WA,  60,  1, 1, "", "");
+
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    auto r = b.service->list_by_user(1, q);
+    EXPECT_EQ(r.total, 3);
+
+    q.language = Language::Cpp;
+    auto r2 = b.service->list_by_user(1, q);
+    EXPECT_EQ(r2.total, 1);
+    EXPECT_EQ(r2.items[0].language, Language::Cpp);
+
+    q = SubmissionListQuery{};
+    q.page = 1; q.page_size = 10;
+    q.status = SubmissionStatus::Queued;
+    auto r3 = b.service->list_by_user(1, q);
+    EXPECT_EQ(r3.total, 1);
+    EXPECT_EQ(r3.items[0].status, SubmissionStatus::Queued);
+}
+
+TEST(SubmissionServiceTest, ListByUserSurfacesRepoError) {
+    auto b = make_service();
+    b.problems->add(mk_problem(true));
+    b.submissions->set_throw_on_list(true);
+    SubmissionListQuery q;
+    EXPECT_THROW(b.service->list_by_user(1, q), std::exception);
+}
+
+// ===========================================================================
+//  list_public_accepted —— 只看 result=AC + status=finished 的
+// ===========================================================================
+TEST(SubmissionServiceTest, ListPublicAcceptedExcludesNonAC) {
+    auto b = make_service();
+    b.problems->add(mk_problem(true));
+    // 2 AC + 1 WA + 1 未完成
+    auto id1 = b.service->create(1, 1, Language::Cpp, "a");
+    auto id2 = b.service->create(2, 1, Language::Cpp, "b");
+    auto id3 = b.service->create(1, 1, Language::Cpp, "c");
+    b.submissions->finish(id1, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.submissions->finish(id2, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.submissions->finish(id3, SubmissionResult::WA,  60,  1, 1, "", "");
+
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    auto r = b.service->list_public_accepted(q);
+    EXPECT_EQ(r.total, 2);
+    for (const auto& it : r.items) {
+        ASSERT_TRUE(it.result.has_value());
+        EXPECT_EQ(*it.result, SubmissionResult::AC);
+        EXPECT_EQ(it.status, SubmissionStatus::Finished);
+    }
+}
+
+TEST(SubmissionServiceTest, ListPublicAcceptedDoesNotFilterByUserId) {
+    auto b = make_service();
+    b.problems->add(mk_problem(true));
+    auto id1 = b.service->create(1, 1, Language::Cpp, "a");
+    auto id2 = b.service->create(2, 1, Language::Cpp, "b");
+    b.submissions->finish(id1, SubmissionResult::AC, 100, 1, 1, "", "");
+    b.submissions->finish(id2, SubmissionResult::AC, 100, 1, 1, "", "");
+
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    auto r = b.service->list_public_accepted(q);
+    EXPECT_EQ(r.total, 2);
+    // 来自两个不同 user
+    std::set<std::int64_t> uids;
+    for (const auto& it : r.items) uids.insert(it.user_id);
+    EXPECT_EQ(uids.size(), 2u);
+}
+
+TEST(SubmissionServiceTest, ListPublicAcceptedSurfacesRepoError) {
+    auto b = make_service();
+    b.submissions->set_throw_on_list(true);
+    SubmissionListQuery q;
+    EXPECT_THROW(b.service->list_public_accepted(q), std::exception);
+}
+
+TEST(SubmissionServiceTest, ListPublicAcceptedEmptyWhenNoSubmission) {
+    auto b = make_service();
+    SubmissionListQuery q;
+    q.page = 1; q.page_size = 10;
+    auto r = b.service->list_public_accepted(q);
+    EXPECT_EQ(r.total, 0);
+    EXPECT_TRUE(r.items.empty());
 }
 
 }  // namespace

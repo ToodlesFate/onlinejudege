@@ -518,42 +518,77 @@ MysqlSubmissionRepo::get_full(std::int64_t id) {
 
 // ---------------------------------------------------------------------------
 //  list_by_user / list_public_accepted
+//  SPEC §2.4 / §5.2.3
+//
+//  列表字段（11 列 submissions + 1 列 problems.title + 1 列 users.username = 13 列）：
+//    s.id, s.user_id, s.problem_id, s.language, s.status, s.result,
+//    s.total_score, s.time_used_ms, s.memory_used_kb,
+//    s.created_at, s.finished_at, p.title, u.username
+//
+//  JOIN：
+//    - LEFT JOIN problems p ON p.id = s.problem_id
+//        problem 可能被删除 —— LEFT JOIN，title 留空
+//    - LEFT JOIN users    u ON u.id = s.user_id
+//        user 不会被删除 —— LEFT JOIN 是为了和现有 get_full 一致；username 必填
+//
+//  COUNT 用纯 submissions 表（不 JOIN，避免 COUNT 性能问题）；
+//  实际数据 JOIN 取 title + username。
 // ---------------------------------------------------------------------------
 namespace {
 
-oj::domain::Submission fetch_submission_row(MYSQL_RES* res) {
+/** 把上面 13 列解析为 SubmissionListItem。 */
+oj::domain::SubmissionListItem fetch_list_item_row(MYSQL_RES* res) {
     MYSQL_ROW row = mysql_fetch_row(res);
-    if (!row) return {};
+    oj::domain::SubmissionListItem it;
+    if (!row) return it;
     unsigned long* lens = mysql_fetch_lengths(res);
-    oj::domain::Submission s;
-    s.id              = parse_int64(row[0]);
-    s.user_id         = parse_int64(row[1]);
-    s.problem_id      = parse_int64(row[2]);
+
+    it.id              = parse_int64(row[0]);
+    if (it.id == 0) return it;            // 行尾哨兵
+    it.user_id         = parse_int64(row[1]);
+    it.problem_id      = parse_int64(row[2]);
+
     auto lang_opt = oj::domain::language_from_string(
         row[3] ? std::string_view(row[3], lens[3]) : std::string_view{});
-    s.language        = lang_opt.value_or(oj::domain::Language::Cpp);
-    // code 不在列表里拉（可能很大）；按需另查
-    s.code.clear();
+    it.language        = lang_opt.value_or(oj::domain::Language::Cpp);
+
     auto stat_opt = oj::domain::submission_status_from_string(
         row[4] ? std::string_view(row[4], lens[4]) : std::string_view{});
-    s.status          = stat_opt.value_or(oj::domain::SubmissionStatus::Queued);
+    it.status          = stat_opt.value_or(oj::domain::SubmissionStatus::Queued);
+
     if (row[5] && lens[5] > 0) {
         auto r_opt = oj::domain::submission_result_from_string(
             std::string_view(row[5], lens[5]));
-        if (r_opt.has_value()) s.result = *r_opt;
+        if (r_opt.has_value()) it.result = *r_opt;
     }
-    s.total_score     = parse_int(row[6]);
-    s.time_used_ms    = parse_int(row[7]);
-    s.memory_used_kb  = parse_int(row[8]);
-    // compile_output / judge_message 不在列表里
-    s.created_at      = datetime_to_iso8601(row[9]);
-    s.finished_at     = datetime_to_iso8601(row[10]);
-    return s;
+
+    it.total_score     = parse_int(row[6]);
+    it.time_used_ms    = parse_int(row[7]);
+    it.memory_used_kb  = parse_int(row[8]);
+
+    it.created_at      = datetime_to_iso8601(row[9]);
+    it.finished_at     = datetime_to_iso8601(row[10]);
+
+    // p.title —— LEFT JOIN，problem 被删时为 NULL
+    if (row[11] && lens[11] > 0) {
+        it.problem_title = std::string(row[11], lens[11]);
+    }
+    // u.username —— LEFT JOIN，理论上 v1 不删 user
+    if (row[12] && lens[12] > 0) {
+        it.username = std::string(row[12], lens[12]);
+    }
+    return it;
 }
 
-const char* kListCols =
-    "id, user_id, problem_id, language, status, result, "
-    "total_score, time_used_ms, memory_used_kb, created_at, finished_at";
+const char* kListJoinCols =
+    "s.id, s.user_id, s.problem_id, s.language, s.status, s.result, "
+    "s.total_score, s.time_used_ms, s.memory_used_kb, "
+    "s.created_at, s.finished_at, p.title, u.username";
+
+const char* kListJoinFrom =
+    " FROM submissions s "
+    "LEFT JOIN problems p ON p.id = s.problem_id "
+    "LEFT JOIN users    u ON u.id = s.user_id";
 
 }  // namespace
 
@@ -569,23 +604,24 @@ MysqlSubmissionRepo::list_by_user(const oj::domain::SubmissionListQuery& q) {
         throw std::runtime_error("MysqlSubmissionRepo::list_by_user: invalid page/page_size");
     }
 
+    // WHERE 仍只引用 submissions 列（COUNT 也复用同一段）
     std::string where = " WHERE 1=1";
     if (q.user_id > 0) {
-        where += " AND user_id=" + std::to_string(q.user_id);
+        where += " AND s.user_id=" + std::to_string(q.user_id);
     }
     if (q.problem_id > 0) {
-        where += " AND problem_id=" + std::to_string(q.problem_id);
+        where += " AND s.problem_id=" + std::to_string(q.problem_id);
     }
     if (q.language.has_value()) {
-        where += " AND language=" + quote(*mysql_, oj::domain::to_string(*q.language));
+        where += " AND s.language=" + quote(*mysql_, oj::domain::to_string(*q.language));
     }
     if (q.status.has_value()) {
-        where += " AND status=" + quote(*mysql_, oj::domain::to_string(*q.status));
+        where += " AND s.status=" + quote(*mysql_, oj::domain::to_string(*q.status));
     }
 
     // COUNT
     {
-        const std::string sql = "SELECT COUNT(*) FROM submissions" + where;
+        const std::string sql = "SELECT COUNT(*) FROM submissions s" + where;
         exec_simple(m, sql, "list_by_user: COUNT");
         MYSQL_RES* res = mysql_store_result(m);
         if (res == nullptr) throw_stmt(m, "list_by_user: store COUNT");
@@ -598,16 +634,16 @@ MysqlSubmissionRepo::list_by_user(const oj::domain::SubmissionListQuery& q) {
 
     const int offset = (q.page - 1) * q.page_size;
     const std::string sql =
-        std::string{"SELECT "} + kListCols + " FROM submissions" + where +
-        " ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(q.page_size) +
+        std::string{"SELECT "} + kListJoinCols + kListJoinFrom + where +
+        " ORDER BY s.created_at DESC, s.id DESC LIMIT " + std::to_string(q.page_size) +
         " OFFSET " + std::to_string(offset);
     exec_simple(m, sql, "list_by_user: SELECT");
     MYSQL_RES* res = mysql_store_result(m);
     if (res == nullptr) throw_stmt(m, "list_by_user: store items");
     while (true) {
-        oj::domain::Submission s = fetch_submission_row(res);
-        if (s.id == 0) break;
-        out.items.push_back(std::move(s));
+        oj::domain::SubmissionListItem it = fetch_list_item_row(res);
+        if (it.id == 0) break;
+        out.items.push_back(std::move(it));
     }
     mysql_free_result(res);
     return out;
@@ -626,17 +662,17 @@ MysqlSubmissionRepo::list_public_accepted(const oj::domain::SubmissionListQuery&
         throw std::runtime_error("MysqlSubmissionRepo::list_public_accepted: invalid page/page_size");
     }
 
-    std::string where = " WHERE result='AC' AND status='finished'";
+    std::string where = " WHERE s.result='AC' AND s.status='finished'";
     if (q.problem_id > 0) {
-        where += " AND problem_id=" + std::to_string(q.problem_id);
+        where += " AND s.problem_id=" + std::to_string(q.problem_id);
     }
     if (q.language.has_value()) {
-        where += " AND language=" + quote(*mysql_, oj::domain::to_string(*q.language));
+        where += " AND s.language=" + quote(*mysql_, oj::domain::to_string(*q.language));
     }
 
     // COUNT
     {
-        const std::string sql = "SELECT COUNT(*) FROM submissions" + where;
+        const std::string sql = "SELECT COUNT(*) FROM submissions s" + where;
         exec_simple(m, sql, "list_public_accepted: COUNT");
         MYSQL_RES* res = mysql_store_result(m);
         if (res == nullptr) throw_stmt(m, "list_public_accepted: store COUNT");
@@ -649,16 +685,16 @@ MysqlSubmissionRepo::list_public_accepted(const oj::domain::SubmissionListQuery&
 
     const int offset = (q.page - 1) * q.page_size;
     const std::string sql =
-        std::string{"SELECT "} + kListCols + " FROM submissions" + where +
-        " ORDER BY created_at DESC, id DESC LIMIT " + std::to_string(q.page_size) +
+        std::string{"SELECT "} + kListJoinCols + kListJoinFrom + where +
+        " ORDER BY s.created_at DESC, s.id DESC LIMIT " + std::to_string(q.page_size) +
         " OFFSET " + std::to_string(offset);
     exec_simple(m, sql, "list_public_accepted: SELECT");
     MYSQL_RES* res = mysql_store_result(m);
     if (res == nullptr) throw_stmt(m, "list_public_accepted: store items");
     while (true) {
-        oj::domain::Submission s = fetch_submission_row(res);
-        if (s.id == 0) break;
-        out.items.push_back(std::move(s));
+        oj::domain::SubmissionListItem it = fetch_list_item_row(res);
+        if (it.id == 0) break;
+        out.items.push_back(std::move(it));
     }
     mysql_free_result(res);
     return out;

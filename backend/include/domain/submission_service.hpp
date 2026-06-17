@@ -108,6 +108,31 @@ public:
         std::int64_t id,
         std::int64_t requester_id,
         bool is_admin) = 0;
+
+    /**
+     * GET /api/submissions 主流程 (SPEC §2.4 / §5.2.3)：
+     *   - 始终过滤 user_id = requester_id（个人列表）
+     *   - query.problem_id / query.language / query.status 可选
+     *   - 按 created_at DESC, id DESC
+     *   - 分页参数 page / page_size 来自 query
+     *
+     * 抛 std::exception 表示 DB 错误。
+     */
+    virtual SubmissionListResult list_by_user(
+        std::int64_t requester_id,
+        const SubmissionListQuery& q) = 0;
+
+    /**
+     * GET /api/submissions/public 主流程 (SPEC §2.4 / §5.2.3)：
+     *   - 仅返回 result=AC + status=finished
+     *   - 任何用户（甚至匿名）可访问
+     *   - query.problem_id / query.language 可选
+     *   - 按 created_at DESC, id DESC
+     *
+     * 抛 std::exception 表示 DB 错误。
+     */
+    virtual SubmissionListResult list_public_accepted(
+        const SubmissionListQuery& q) = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -133,6 +158,13 @@ public:
         std::int64_t id,
         std::int64_t requester_id,
         bool         is_admin) override;
+
+    SubmissionListResult list_by_user(
+        std::int64_t requester_id,
+        const SubmissionListQuery& q) override;
+
+    SubmissionListResult list_public_accepted(
+        const SubmissionListQuery& q) override;
 
     int code_max_bytes() const noexcept { return code_max_bytes_; }
 
