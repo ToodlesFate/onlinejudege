@@ -1250,7 +1250,7 @@ open http://localhost
 - [x] localStorage 草稿自动保存
 
 ### Phases 4 - 判题子系统
-- [ ] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控
+- [x] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控
 - [ ] 5 个 judge 镜像 Dockerfile + entrypoint.sh
 - [ ] DockerClient（C++，libcurl 调用 Engine API）
 - [ ] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
