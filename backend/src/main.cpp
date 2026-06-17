@@ -28,12 +28,16 @@
 #include "common/error_code.hpp"
 #include "common/version.hpp"
 #include "domain/auth_service.hpp"
+#include "domain/problem_repository.hpp"
+#include "domain/problem_service.hpp"
 #include "http/HttpServer.hpp"
 #include "http/handlers/auth_handler.hpp"
 #include "http/handlers/health_handler.hpp"
+#include "http/handlers/problem_handler.hpp"
 #include "infra/jwt_service.hpp"
 #include "infra/mysql_client.hpp"
 #include "infra/password_hasher.hpp"
+#include "infra/problem_repo.hpp"
 #include "infra/user_repo.hpp"
 
 namespace {
@@ -217,6 +221,12 @@ int main(int argc, char** argv) {
     auto auth_service = std::make_shared<domain::AuthService>(users, hasher, jwt);
 
     // -------------------------------------------------------------------
+    //  Problem 域装配 —— repo (Infra) + service (Domain) + handler (Http)
+    // -------------------------------------------------------------------
+    auto problems_repo    = std::make_shared<infra::MysqlProblemRepo>(mysql);
+    auto problem_service  = std::make_shared<domain::ProblemService>(problems_repo);
+
+    // -------------------------------------------------------------------
     //  Http 层
     // -------------------------------------------------------------------
     http::HttpServer server(std::move(cfg));
@@ -227,6 +237,9 @@ int main(int argc, char** argv) {
 
     http::handlers::register_auth_routes(server, auth_service,
                                          [mysql]() { return mysql->is_ready(); });
+
+    http::handlers::register_problem_routes(server, problem_service,
+                                           [mysql]() { return mysql->is_ready(); });
 
     g_server.store(&server, std::memory_order_release);
 

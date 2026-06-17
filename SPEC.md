@@ -1242,8 +1242,8 @@ open http://localhost
 - [x] 前端：登录/注册页 + Token 存储 + API 客户端
 
 ### Phases 3 - 题目模块
-- [ ] problems / testcases / tags 表 + Repo
-- [ ] `GET /api/problems`（分页、过滤、排序）
+- [x] problems / testcases / tags 表 + Repo
+- [x] `GET /api/problems`（分页、过滤、排序）
 - [ ] `GET /api/problems/{id}`（含样例点）
 - [ ] `GET /api/tags`
 - [ ] 前端：题目列表页 + 题目详情页（Markdown 渲染 + Monaco 编辑器）
