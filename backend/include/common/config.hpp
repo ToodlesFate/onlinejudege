@@ -51,11 +51,45 @@ struct JwtConfig {
     std::string  issuer{"onlinejudge"};
 };
 
+struct DockerConfig {
+    // unix:///var/run/docker.sock （典型） 或 tcp://host:2375
+    std::string  host{"unix:///var/run/docker.sock"};
+    // Docker Engine API version（SPEC §6.1 固定 v1.41 +）
+    std::string  api_version{"v1.41"};
+    // 单次 HTTP 请求超时（秒）
+    int          request_timeout_sec{120};
+    // 容器 wait 超时 = time_limit + 此 buffer（SPEC §6.1：30s）
+    int          container_wait_buffer_sec{30};
+};
+
+struct JudgeImageConfig {
+    std::string c     {"judge-c:1.0"};
+    std::string cpp   {"judge-cpp:1.0"};
+    std::string java  {"judge-java:1.0"};
+    std::string python{"judge-python:1.0"};
+    std::string go    {"judge-go:1.0"};
+};
+
+struct JudgeConfig {
+    int                worker_count{4};
+    int                poll_interval_ms{500};
+    int                default_time_limit_ms{2000};
+    int                default_memory_limit_mb{256};
+    int                default_output_limit_mb{64};
+    int                code_max_bytes{65536};
+    int                problem_md_max_bytes{65536};
+    std::filesystem::path work_root{"/tmp/oj"};
+
+    DockerConfig        docker{};
+    JudgeImageConfig    images{};
+};
+
 struct AppConfig {
     ServerConfig server{};
     LogConfig    log{};
     MysqlConfig  mysql{};
     JwtConfig    jwt{};
+    JudgeConfig  judge{};
 
     [[nodiscard]] static AppConfig load(const std::filesystem::path& path);
     [[nodiscard]] static AppConfig load_from_string(std::string_view json_text);

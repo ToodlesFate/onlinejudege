@@ -1252,7 +1252,7 @@ open http://localhost
 ### Phases 4 - 判题子系统
 - [x] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控
 - [x] 5 个 judge 镜像 Dockerfile + entrypoint.sh
-- [ ] DockerClient（C++，libcurl 调用 Engine API）
+- [x] DockerClient（C++，libcurl 调用 Engine API）
 - [ ] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
 - [ ] submission / submission_cases 表
 - [ ] `POST /api/submissions` + `GET /api/submissions/{id}`

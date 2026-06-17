@@ -73,6 +73,35 @@ AppConfig parse(Src&& source, std::string_view origin_for_error) {
         if (auto p = j.find("issuer");          p != j.end() && p->is_string()) cfg.jwt.issuer          = p->get<std::string>();
     }
 
+    if (auto it = root.find("judge"); it != root.end() && it->is_object()) {
+        const auto& j = *it;
+        if (auto p = j.find("worker_count");             p != j.end() && p->is_number_integer()) cfg.judge.worker_count            = p->get<int>();
+        if (auto p = j.find("poll_interval_ms");          p != j.end() && p->is_number_integer()) cfg.judge.poll_interval_ms         = p->get<int>();
+        if (auto p = j.find("default_time_limit_ms");    p != j.end() && p->is_number_integer()) cfg.judge.default_time_limit_ms   = p->get<int>();
+        if (auto p = j.find("default_memory_limit_mb");  p != j.end() && p->is_number_integer()) cfg.judge.default_memory_limit_mb = p->get<int>();
+        if (auto p = j.find("default_output_limit_mb");  p != j.end() && p->is_number_integer()) cfg.judge.default_output_limit_mb = p->get<int>();
+        if (auto p = j.find("code_max_bytes");           p != j.end() && p->is_number_integer()) cfg.judge.code_max_bytes          = p->get<int>();
+        if (auto p = j.find("problem_md_max_bytes");     p != j.end() && p->is_number_integer()) cfg.judge.problem_md_max_bytes    = p->get<int>();
+        if (auto p = j.find("work_root");                p != j.end() && p->is_string())           cfg.judge.work_root               = p->get<std::string>();
+
+        if (auto dit = j.find("docker"); dit != j.end() && dit->is_object()) {
+            const auto& d = *dit;
+            if (auto p = d.find("host");                       p != d.end() && p->is_string()) cfg.judge.docker.host = p->get<std::string>();
+            if (auto p = d.find("api_version");                p != d.end() && p->is_string()) cfg.judge.docker.api_version = p->get<std::string>();
+            if (auto p = d.find("request_timeout_sec");        p != d.end() && p->is_number_integer()) cfg.judge.docker.request_timeout_sec = p->get<int>();
+            if (auto p = d.find("container_wait_buffer_sec"); p != d.end() && p->is_number_integer()) cfg.judge.docker.container_wait_buffer_sec = p->get<int>();
+        }
+
+        if (auto iit = j.find("images"); iit != j.end() && iit->is_object()) {
+            const auto& ii = *iit;
+            if (auto p = ii.find("c");      p != ii.end() && p->is_string()) cfg.judge.images.c      = p->get<std::string>();
+            if (auto p = ii.find("cpp");    p != ii.end() && p->is_string()) cfg.judge.images.cpp    = p->get<std::string>();
+            if (auto p = ii.find("java");   p != ii.end() && p->is_string()) cfg.judge.images.java   = p->get<std::string>();
+            if (auto p = ii.find("python"); p != ii.end() && p->is_string()) cfg.judge.images.python = p->get<std::string>();
+            if (auto p = ii.find("go");     p != ii.end() && p->is_string()) cfg.judge.images.go     = p->get<std::string>();
+        }
+    }
+
     return cfg;
 }
 
