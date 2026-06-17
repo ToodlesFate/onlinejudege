@@ -117,6 +117,14 @@ export function createRouter(opts) {
         // 触发回调（高亮 nav、scroll 复位等）
         opts.onChange?.({ path: url.pathname, params, query, route });
 
+        // 路由切换：先调上一个视图的 _cleanup（如果有），把 poller / Monaco 等关掉
+        try {
+            const prev = mountEl.firstElementChild;
+            if (prev && typeof prev._cleanup === 'function') {
+                try { prev._cleanup(); } catch (e) { console.warn('[router] prev cleanup error', e); }
+            }
+        } catch (e) { /* ignore */ }
+
         const view = route ? route.view : (opts.notFound || defaultNotFound);
         try {
             const result = await view(params, query);

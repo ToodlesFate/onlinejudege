@@ -22,6 +22,8 @@ import loginView    from './views/login.js';
 import registerView from './views/register.js';
 import problemListView   from './views/problem-list.js';
 import problemDetailView from './views/problem-detail.js';
+import submissionListView   from './views/submission-list.js';
+import submissionDetailView from './views/submission-detail.js';
 import notFoundView from './views/not-found.js';
 import { stubView } from './views/_stub.js';
 
@@ -37,8 +39,8 @@ const ROUTES = [
     { path: '/register',                  view: registerView,                      title: '注册 · OnlineJudge' },
     { path: '/problems',                  view: problemListView,                   title: '题库 · OnlineJudge' },
     { path: '/problems/:id',              view: problemDetailView,                 title: '题目详情 · OnlineJudge' },
-    { path: '/submissions',               view: stubView('我的提交', 6),           title: '我的提交 · OnlineJudge' },
-    { path: '/submissions/:id',           view: stubView('提交详情', 6),           title: '提交详情 · OnlineJudge' },
+    { path: '/submissions',               view: submissionListView,               title: '我的提交 · OnlineJudge' },
+    { path: '/submissions/:id',           view: submissionDetailView,             title: '提交详情 · OnlineJudge' },
     { path: '/admin/problems',            view: stubView('后台 · 题目管理', 5),     title: '后台 · OnlineJudge' },
     { path: '/admin/problems/new',        view: stubView('新建题目',  5),           title: '新建题目 · OnlineJudge' },
     { path: '/admin/problems/:id/edit',   view: stubView('编辑题目',  5),           title: '编辑题目 · OnlineJudge' },

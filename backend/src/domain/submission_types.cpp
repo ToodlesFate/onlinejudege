@@ -24,6 +24,12 @@ submission_status_from_string(std::string_view s) noexcept {
     return std::nullopt;
 }
 
+bool is_terminal_status(SubmissionStatus s) noexcept {
+    // SPEC §2.3.2 状态机：queued/compiling/running → finished
+    // 只有 Finished 是终态（之后填 result）
+    return s == SubmissionStatus::Finished;
+}
+
 // ---------------------------------------------------------------------------
 //  SubmissionResult ↔ string
 // ---------------------------------------------------------------------------
@@ -57,6 +63,11 @@ submission_result_from_string(std::string_view s) noexcept {
 bool is_terminal(SubmissionResult /*r*/) noexcept {
     // 8 态全部是终态
     return true;
+}
+
+bool is_early_exit(SubmissionResult r) noexcept {
+    // SPEC §2.3.2：CE / SE 走 compiling → finished 直跳，绕过 running
+    return r == SubmissionResult::CE || r == SubmissionResult::SE;
 }
 
 }  // namespace oj::domain

@@ -30,6 +30,16 @@ enum class SubmissionStatus { Queued, Compiling, Running, Finished };
 std::string_view to_string(SubmissionStatus s) noexcept;
 std::optional<SubmissionStatus> submission_status_from_string(std::string_view s) noexcept;
 
+/**
+ * 主流程状态机是否"已结束"（SPEC §2.3.2 状态机）。
+ * 只有 status == Finished 算"已结束"；其余 3 态（queued/compiling/running）
+ * 仍在前台轮询。
+ *
+ * @note  与 SubmissionResult 无关：result 是 status=Finished 之后的填充字段。
+ *        这里只判主流程 status。
+ */
+bool is_terminal_status(SubmissionStatus s) noexcept;
+
 // ---------------------------------------------------------------------------
 //  SubmissionResult —— 8 态结果 (与 DockerClient::JudgeStatus 对齐)
 //  这里再次定义为 domain 类型而不是直接用 infra 的 JudgeStatus，是为了
@@ -48,6 +58,24 @@ enum class SubmissionResult {
 
 std::string_view to_string(SubmissionResult r) noexcept;
 std::optional<SubmissionResult> submission_result_from_string(std::string_view s) noexcept;
+
+/**
+ * 8 种结果态全部是"已结束"（SPEC §2.3.2）。一旦 status=Finished，result 必填
+ * 8 态之一，函数返回 true。
+ */
+bool is_terminal(SubmissionResult /*r*/) noexcept;
+
+/**
+ * 是否"早退出"—— 即没有真正进入 running 阶段、没产生任何测试点结果。
+ * 早退出原因：编译失败 (CE) 或判题机系统级异常 (SE)。
+ * 这两类在 SPEC §2.3.2 状态机中由 compiling 直接 → finished，绕过 running。
+ *
+ * 用于：
+ *  - 提交详情页的"测试点表格"空态文案（CE/SE 不显示 0 个测试点）
+ *  - 前端状态机可视化的 running 节点标为 'skipped'
+ *  - judge dispatcher 决定是否要写 submission_cases
+ */
+bool is_early_exit(SubmissionResult r) noexcept;
 
 // ---------------------------------------------------------------------------
 //  Submission —— SPEC §4.2 submissions 表

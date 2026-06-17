@@ -166,11 +166,12 @@ queued ──> compiling ──> running ──> finished (one of 8 terminal sta
 #### 2.3.3 判题协议（容器内）
 详见第 6 章。
 
-#### 2.3.4 前端轮询
+#### 2.3.4 前端轮询 ✅
 - 提交成功后前端每 **2 秒** 调用 `GET /api/submissions/{id}`
 - 状态为 `finished` 时立即停止轮询
 - 最多轮询 30 分钟（超时后停止并提示）
 - 切换 tab 至后台时**不暂停**轮询（简化实现）
+- 实现：`frontend/js/utils/poller.js`（`createPoller`，默认 `intervalMs=2000` / `maxDurationMs=30min`）
 
 ### 2.4 提交历史
 - 个人提交列表：分页（20/页）、按时间倒序、可按题目 / 语言 / 状态过滤
@@ -1256,7 +1257,7 @@ open http://localhost
 - [x] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
 - [x] submission / submission_cases 表
 - [x] `POST /api/submissions` + `GET /api/submissions/{id}`
-- [ ] 前端：提交后 2s 轮询 + 状态机可视化
+- [x] 前端：提交后 2s 轮询 + 状态机可视化
 
 ### Phases 5 - 后台管理
 - [ ] admin API：CRUD + 上下架
