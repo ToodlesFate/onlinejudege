@@ -34,6 +34,7 @@
 #include "domain/submission_repository.hpp"
 #include "domain/submission_service.hpp"
 #include "http/HttpServer.hpp"
+#include "http/handlers/admin_problem_handler.hpp"
 #include "http/handlers/auth_handler.hpp"
 #include "http/handlers/health_handler.hpp"
 #include "http/handlers/problem_handler.hpp"
@@ -282,6 +283,9 @@ int main(int argc, char** argv) {
 
     http::handlers::register_problem_routes(server, problem_service,
                                            [mysql]() { return mysql->is_ready(); });
+
+    http::handlers::register_admin_problem_routes(server, problem_service, jwt,
+                                                  [mysql]() { return mysql->is_ready(); });
 
     http::handlers::register_submission_routes(server, submission_service, jwt,
                                                [mysql]() { return mysql->is_ready(); });

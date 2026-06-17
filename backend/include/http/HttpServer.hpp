@@ -59,8 +59,11 @@ public:
     // 注册 handler（method 全大写，如 "GET"/"POST"）
     void route(const std::string& method, const std::string& path, Handler handler);
 
-    void get (const std::string& path, Handler h) { route("GET",    path, std::move(h)); }
-    void post(const std::string& path, Handler h) { route("POST",   path, std::move(h)); }
+    void get   (const std::string& path, Handler h) { route("GET",    path, std::move(h)); }
+    void post  (const std::string& path, Handler h) { route("POST",   path, std::move(h)); }
+    void put   (const std::string& path, Handler h) { route("PUT",    path, std::move(h)); }
+    void del   (const std::string& path, Handler h) { route("DELETE", path, std::move(h)); }
+    void patch (const std::string& path, Handler h) { route("PATCH",  path, std::move(h)); }
 
     // 安装全局异常中间件：handler 抛异常时统一返回 500 envelope
     void install_exception_middleware();

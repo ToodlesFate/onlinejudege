@@ -38,6 +38,68 @@ struct ProblemDetail {
     std::vector<Testcase> sample_testcases;
 };
 
+// 后台详情 DTO —— 题面 + tags + 全部测试点（包含隐藏点；admin 编辑用）
+struct AdminProblemDetail {
+    Problem               problem;
+    std::vector<Tag>      tags;
+    std::vector<Testcase> testcases;   // 全部测试点（按 case_index ASC）
+};
+
+// 业务校验约束 —— SPEC §2.2.1
+inline constexpr std::size_t kProblemTitleMax        = 100;
+inline constexpr std::size_t kProblemContentMdMax    = 65536;  // 64KB
+inline constexpr int         kProblemTimeLimitMin    = 1;
+inline constexpr int         kProblemTimeLimitMax    = 10000;
+inline constexpr int         kProblemMemoryLimitMin  = 64;
+inline constexpr int         kProblemMemoryLimitMax  = 1024;
+inline constexpr int         kProblemOutputLimitMin  = 1;
+inline constexpr int         kProblemOutputLimitMax  = 256;
+inline constexpr int         kProblemCaseMin         = 1;
+inline constexpr int         kProblemCaseMax         = 100;
+inline constexpr int         kProblemCaseScoreSum    = 100;
+
+// 后台管理错误类型 —— service 层抛，handler 层翻译为 ErrorCode
+enum class AdminProblemErrorKind {
+    BadRequest,        // 字段缺失 / 越界 / 校验失败
+    NotFound,          // 题目不存在
+    Internal,          // DB 错误
+};
+
+class AdminProblemError : public std::runtime_error {
+public:
+    AdminProblemError(AdminProblemErrorKind k, const std::string& msg)
+        : std::runtime_error(msg), kind_(k) {}
+    [[nodiscard]] AdminProblemErrorKind kind() const noexcept { return kind_; }
+private:
+    AdminProblemErrorKind kind_;
+};
+
+// admin 写操作 DTO —— POST/PUT 复用同一形状
+//
+//  字段命名与 SPEC §5.2.4 "POST /api/admin/problems body" 一致：
+//    title / content_md / difficulty / time_limit_ms / memory_limit_mb /
+//    output_limit_mb / is_published / tag_ids[] / cases[]
+//
+//  校验规则（service 层集中，handler 不重复）：
+//    - title: 1..100 字符，trim 后不能为空
+//    - content_md: 1..65536 字节
+//    - difficulty: 必填，且 ∈ {easy, medium, hard}
+//    - time_limit_ms / memory_limit_mb / output_limit_mb: SPEC §2.2.1 区间
+//    - tag_ids: 可空数组（admin 可不改 tag）；若非空，每个 id 都必须在 tags 表内
+//    - cases: 1..100 个；case_index 必填、唯一、∈ [1,100]；score ∈ [0,100]；
+//             所有 case 的 score 之和必须等于 100
+struct ProblemWriteInput {
+    std::string                title;
+    std::string                content_md;
+    std::string                difficulty_str;   // "easy"/"medium"/"hard"
+    int                        time_limit_ms{2000};
+    int                        memory_limit_mb{256};
+    int                        output_limit_mb{64};
+    bool                       is_published{false};
+    std::vector<int>           tag_ids;          // 空数组 = 不关联任何 tag
+    std::vector<Testcase>      cases;            // 1..100 个；case_index 必填且唯一
+};
+
 class IProblemService {
 public:
     virtual ~IProblemService() = default;
@@ -70,6 +132,48 @@ public:
      */
     virtual std::vector<Tag> list_tags() = 0;
 
+    // ----- 后台管理（SPEC §5.2.4 admin API） ---------------------------
+
+    /**
+     * 后台详情（含全部测试点）—— SPEC §3.3.5 M GET /api/admin/problems/{id}/edit-data
+     *   - 找不到 → std::nullopt（handler 翻译 1004）
+     *   - 找到时返回 Problem + tags + 全部 testcases（按 case_index ASC）
+     */
+    virtual std::optional<AdminProblemDetail> get_admin_detail(std::int64_t id) = 0;
+
+    /**
+     * 后台创建 —— SPEC §5.2.4 POST /api/admin/problems
+     *   - 字段校验（title / content_md / difficulty / limits / cases / tag_ids）
+     *   - 事务内：create problem → set_problem_tags → replace_by_problem
+     *   - 任一失败 → 抛 AdminProblemError(BadRequest) 或 Internal
+     *   - 返回新建题目（含 id / created_at）
+     */
+    virtual Problem create_problem(std::int64_t created_by,
+                                   const ProblemWriteInput& in) = 0;
+
+    /**
+     * 后台全量更新 —— SPEC §5.2.4 PUT /api/admin/problems/{id}
+     *   - 与 create_problem 走相同的校验
+     *   - 不存在 → AdminProblemError(NotFound)
+     *   - 事务内：update problem → set_problem_tags → replace_by_problem
+     */
+    virtual void update_problem(std::int64_t id,
+                                const ProblemWriteInput& in) = 0;
+
+    /**
+     * 后台软删 —— SPEC §5.2.4 DELETE /api/admin/problems/{id}
+     *   - is_published=0（不真删 —— 保留提交历史，SPEC §2.2.1）
+     *   - 不存在 → AdminProblemError(NotFound)
+     */
+    virtual void delete_problem(std::int64_t id) = 0;
+
+    /**
+     * 后台上下架 —— SPEC §5.2.4 PATCH /api/admin/problems/{id}/publish
+     *   - is_published = published
+     *   - 不存在 → AdminProblemError(NotFound)
+     */
+    virtual void set_published(std::int64_t id, bool published) = 0;
+
 #ifndef OJ_PRODUCTION
     // 测试辅助：让 handler 测试可以直接拿到 tags repo
     // （不在生产代码中暴露该 API）
@@ -93,6 +197,14 @@ public:
     std::optional<ProblemDetail> get_detail(std::int64_t id,
                                            bool include_unpublished) override;
     std::vector<Tag> list_tags() override;
+
+    std::optional<AdminProblemDetail> get_admin_detail(std::int64_t id) override;
+    Problem create_problem(std::int64_t created_by,
+                           const ProblemWriteInput& in) override;
+    void update_problem(std::int64_t id,
+                        const ProblemWriteInput& in) override;
+    void delete_problem(std::int64_t id) override;
+    void set_published(std::int64_t id, bool published) override;
 #ifndef OJ_PRODUCTION
     std::shared_ptr<ITagRepository> tags_repo_for_test() override { return tags_; }
 #endif
@@ -101,6 +213,12 @@ private:
     std::shared_ptr<IProblemRepository>   problems_;
     std::shared_ptr<ITestcaseRepository> testcases_;
     std::shared_ptr<ITagRepository>       tags_;
+
+    // 内部：把 ProblemWriteInput 翻译成 Problem + 校验 cases 字段
+    // 失败抛 AdminProblemError(BadRequest, msg)
+    Problem build_problem(const ProblemWriteInput& in) const;
+    void    validate_cases(const std::vector<Testcase>& cases);
+    void    validate_tag_ids(const std::vector<int>& tag_ids);
 };
 
 //

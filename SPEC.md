@@ -1260,7 +1260,7 @@ open http://localhost
 - [x] 前端：提交后 2s 轮询 + 状态机可视化
 
 ### Phases 5 - 后台管理
-- [ ] admin API：CRUD + 上下架
+- [x] admin API：CRUD + 上下架
 - [ ] 前端：管理后台题目列表 + Monaco Markdown 编辑器 + 客户端预览
 - [ ] 测试点动态增删 + 校验总分 = 100
 
