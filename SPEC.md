@@ -1255,7 +1255,7 @@ open http://localhost
 - [x] DockerClient（C++，libcurl 调用 Engine API）
 - [x] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
 - [x] submission / submission_cases 表
-- [ ] `POST /api/submissions` + `GET /api/submissions/{id}`
+- [x] `POST /api/submissions` + `GET /api/submissions/{id}`
 - [ ] 前端：提交后 2s 轮询 + 状态机可视化
 
 ### Phases 5 - 后台管理

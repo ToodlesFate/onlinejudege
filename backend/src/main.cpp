@@ -31,10 +31,13 @@
 #include "domain/judge_dispatcher.hpp"
 #include "domain/problem_repository.hpp"
 #include "domain/problem_service.hpp"
+#include "domain/submission_repository.hpp"
+#include "domain/submission_service.hpp"
 #include "http/HttpServer.hpp"
 #include "http/handlers/auth_handler.hpp"
 #include "http/handlers/health_handler.hpp"
 #include "http/handlers/problem_handler.hpp"
+#include "http/handlers/submission_handler.hpp"
 #include "infra/docker_client.hpp"
 #include "infra/docker_judge_adapter.hpp"
 #include "infra/jwt_service.hpp"
@@ -244,9 +247,9 @@ int main(int argc, char** argv) {
     //   注意：cfg 在下方会被 move 进 HttpServer；这里先把 cfg.judge 拷贝一份
     //   出来，避免 use-after-move。
     // -------------------------------------------------------------------
+    auto submissions_repo = std::make_shared<infra::MysqlSubmissionRepo>(mysql);
     std::shared_ptr<oj::domain::JudgeDispatcher> dispatcher;
     if (mysql->is_ready()) {
-        auto submissions_repo = std::make_shared<infra::MysqlSubmissionRepo>(mysql);
         auto docker_client    = std::make_shared<infra::DockerClient>(cfg.judge.docker);
         docker_client->set_work_root(cfg.judge.work_root);
         auto docker_adapter   = std::make_shared<infra::DockerJudgeAdapter>(docker_client);
@@ -257,6 +260,13 @@ int main(int argc, char** argv) {
     } else {
         spdlog::warn("MySQL not ready; JudgeDispatcher not started (submissions will queue but never be picked up)");
     }
+
+    // -------------------------------------------------------------------
+    //  Submission 域装配 —— SubmissionService（HTTP handler 用）
+    //   即便 dispatcher 没起，POST/GET 路由也要可访问（DB 不可用走 503）
+    // -------------------------------------------------------------------
+    auto submission_service = std::make_shared<domain::SubmissionService>(
+        submissions_repo, problems_repo, testcases_repo, cfg.judge.code_max_bytes);
 
     // -------------------------------------------------------------------
     //  Http 层
@@ -272,6 +282,9 @@ int main(int argc, char** argv) {
 
     http::handlers::register_problem_routes(server, problem_service,
                                            [mysql]() { return mysql->is_ready(); });
+
+    http::handlers::register_submission_routes(server, submission_service, jwt,
+                                               [mysql]() { return mysql->is_ready(); });
 
     g_server.store(&server, std::memory_order_release);
 

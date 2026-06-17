@@ -447,7 +447,8 @@ MysqlSubmissionRepo::find_by_id(std::int64_t id) {
 }
 
 // ---------------------------------------------------------------------------
-//  get_full —— submission + cases
+//  get_full —— submission + username (LEFT JOIN users) + cases
+//  一次性把 username 拉出来，避免在 handler 里再来一次往返。
 // ---------------------------------------------------------------------------
 std::optional<oj::domain::SubmissionDetail>
 MysqlSubmissionRepo::get_full(std::int64_t id) {
@@ -460,6 +461,28 @@ MysqlSubmissionRepo::get_full(std::int64_t id) {
     auto lease = mysql_->acquire();
     MYSQL* m = lease.raw();
 
+    // 1) 取 username —— LEFT JOIN users；user 已被删除时为 NULL（理论上 v1 不删 user）
+    {
+        const std::string sql =
+            "SELECT u.username FROM submissions s "
+            "LEFT JOIN users u ON s.user_id = u.id "
+            "WHERE s.id=" + std::to_string(id) + " LIMIT 1";
+        exec_simple(m, sql, "get_full: username SELECT");
+        MYSQL_RES* res = mysql_store_result(m);
+        if (res == nullptr) {
+            if (mysql_field_count(m) != 0) throw_stmt(m, "get_full: username store_result");
+        } else {
+            if (MYSQL_ROW row = mysql_fetch_row(res)) {
+                unsigned long* lens = mysql_fetch_lengths(res);
+                if (row[0] && lens[0] > 0) {
+                    d.username = std::string(row[0], lens[0]);
+                }
+            }
+            mysql_free_result(res);
+        }
+    }
+
+    // 2) 取 cases
     const std::string sql =
         "SELECT id, case_index, status, time_used_ms, memory_used_kb, "
         "score, is_sample, user_output FROM submission_cases "

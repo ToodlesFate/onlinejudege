@@ -74,6 +74,9 @@ struct Submission {
 //  SubmissionCase —— SPEC §4.2 submission_cases 表
 //  注意点：
 //    - user_output 仅 is_sample=1 时存储；host 端决定
+//    - input / expected_output 由 service 层在 get_detail 时从 testcases 表回填，
+//      只对 is_sample=1 的样例点填充；隐藏点始终为空。这样 API 响应可以一次
+//      返回前端需要的全部信息（user_output / expected_output / 隐藏点状态）
 // ---------------------------------------------------------------------------
 struct SubmissionCase {
     std::int64_t id{};
@@ -85,6 +88,8 @@ struct SubmissionCase {
     int          score{0};
     bool         is_sample{false};
     std::string  user_output;       // 仅 is_sample=1 时填；其余置空
+    std::string  input;             // 仅 is_sample=1 时由 service 回填
+    std::string  expected_output;   // 仅 is_sample=1 时由 service 回填
 };
 
 // ---------------------------------------------------------------------------
@@ -117,10 +122,13 @@ struct JudgeTaskPayload {
 };
 
 // ---------------------------------------------------------------------------
-//  SubmissionDetail —— get_full() 返回：submission 本体 + cases 列表
+//  SubmissionDetail —— get_full() 返回：submission 本体 + 提交人 username + cases 列表
+//  username 由 repo 在 get_full 时通过 LEFT JOIN users 表填充；
+//  列表视图（list_by_user / list_public_accepted）不需要 username。
 // ---------------------------------------------------------------------------
 struct SubmissionDetail {
-    Submission              submission;
+    Submission                  submission;
+    std::string                 username;       // 提交人 username
     std::vector<SubmissionCase> cases;
 };
 
