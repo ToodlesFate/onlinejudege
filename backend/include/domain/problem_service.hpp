@@ -12,11 +12,16 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "domain/problem_repository.hpp"
 #include "domain/problem_types.hpp"
+#include "domain/tag_repository.hpp"
+#include "domain/testcase_repository.hpp"
 
 namespace oj::domain {
 
@@ -24,6 +29,14 @@ namespace oj::domain {
 inline constexpr int kProblemPageSizeOptions[] = {10, 20, 50};
 inline constexpr int kProblemDefaultPageSize   = 20;
 inline constexpr int kProblemMaxPageSize       = 50;
+
+// 题目详情 DTO —— 列表项 + 关联 tags + 样例测试点
+//  注意：测试点列表**只**包含 is_sample=1 的（隐藏点不返回 —— SPEC §2.3.2 / §3.3.5 K）
+struct ProblemDetail {
+    Problem             problem;
+    std::vector<Tag>    tags;
+    std::vector<Testcase> sample_testcases;
+};
 
 class IProblemService {
 public:
@@ -39,6 +52,15 @@ public:
      *   - tag_slugs 保留入参顺序，service 层不做 dedup（DB IN 查重 O(n) 即可）
      */
     virtual ProblemListResult list(const ProblemListQuery& q) = 0;
+
+    /**
+     * 详情查询 —— SPEC §5.2.2 GET /api/problems/{id}：
+     *   - 找不到 / include_unpublished=false 但 is_published=false → std::nullopt
+     *     （handler 翻译为 1004 NotFound）
+     *   - 找到时返回 Problem + tags + 仅 is_sample=1 的样例
+     */
+    virtual std::optional<ProblemDetail> get_detail(std::int64_t id,
+                                                   bool include_unpublished) = 0;
 };
 
 // 标准实现 —— 直接代理到 IProblemRepository
@@ -46,13 +68,21 @@ public:
 //   在这里集中，handler 只负责 URL → ProblemListQuery 的转换
 class ProblemService final : public IProblemService {
 public:
-    explicit ProblemService(std::shared_ptr<IProblemRepository> repo)
-        : repo_(std::move(repo)) {}
+    ProblemService(std::shared_ptr<IProblemRepository>    problems,
+                   std::shared_ptr<ITestcaseRepository>  testcases,
+                   std::shared_ptr<ITagRepository>        tags)
+        : problems_(std::move(problems)),
+          testcases_(std::move(testcases)),
+          tags_(std::move(tags)) {}
 
     ProblemListResult list(const ProblemListQuery& q) override;
+    std::optional<ProblemDetail> get_detail(std::int64_t id,
+                                           bool include_unpublished) override;
 
 private:
-    std::shared_ptr<IProblemRepository> repo_;
+    std::shared_ptr<IProblemRepository>   problems_;
+    std::shared_ptr<ITestcaseRepository> testcases_;
+    std::shared_ptr<ITagRepository>       tags_;
 };
 
 //
@@ -82,3 +112,4 @@ ParsedListQuery parse_problems_list_query(
     bool is_admin = false);
 
 }  // namespace oj::domain
+

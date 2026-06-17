@@ -30,6 +30,7 @@
 #include "infra/mysql_client.hpp"
 #include "infra/problem_repo.hpp"
 #include "infra/tag_repo.hpp"
+#include "infra/testcase_repo.hpp"
 
 namespace {
 
@@ -113,7 +114,9 @@ protected:
         tags_ = std::make_shared<MysqlTagRepo>(cli_);
         ensure_tags();
         ensure_admin();
-        svc_ = std::make_shared<ProblemService>(repo_);
+        svc_ = std::make_shared<ProblemService>(repo_,
+            std::make_shared<oj::infra::MysqlTestcaseRepo>(cli_),
+            std::make_shared<oj::infra::MysqlTagRepo>(cli_));
     }
     void TearDown() override {
         if (!cli_ || !cli_->is_ready()) return;
@@ -294,6 +297,124 @@ TEST_F(T, EndToEndDbDownReturns503) {
     srv.start();
 
     auto res = cli(19607).Get("/api/problems");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+}
+
+// ===========================================================================
+//  GET /api/problems/:id 端到端 MySQL 测试
+// ===========================================================================
+TEST_F(T, EndToEndDetailReturnsFullData) {
+    auto pid = mkP("oj_api_detail_full", Difficulty::Medium, true, {1, 5});
+    // 灌 2 sample + 1 hidden
+    {
+        auto lease = cli_->acquire();
+        for (int i = 1; i <= 3; ++i) {
+            const std::string sql =
+                "INSERT INTO testcases (problem_id, case_index, input, expected_output, is_sample, score) VALUES ("
+                + std::to_string(pid) + "," + std::to_string(i) + ","
+                + "'in" + std::to_string(i) + "','out" + std::to_string(i) + "',"
+                + (i <= 2 ? "1" : "0") + "," + (i <= 2 ? "40" : "20") + ")";
+            mysql_real_query(lease.raw(), sql.data(), static_cast<unsigned long>(sql.size()));
+        }
+    }
+    ScopedServer srv(19700);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return cli_->is_ready(); });
+    srv.start();
+
+    auto res = cli(19700).Get("/api/problems/" + std::to_string(pid));
+    ASSERT_TRUE(res != nullptr);
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 0);
+    EXPECT_EQ(j["data"]["id"].get<std::int64_t>(), pid);
+    EXPECT_EQ(j["data"]["title"], "oj_api_detail_full");
+    EXPECT_EQ(j["data"]["difficulty"], "medium");
+    EXPECT_EQ(j["data"]["is_published"], true);
+    EXPECT_EQ(j["data"]["time_limit_ms"].get<int>(), 2000);
+    EXPECT_EQ(j["data"]["memory_limit_mb"].get<int>(), 256);
+    EXPECT_EQ(j["data"]["output_limit_mb"].get<int>(), 64);
+    // tags
+    ASSERT_EQ(j["data"]["tags"].size(), 2u);
+    EXPECT_EQ(j["data"]["tags"][0]["id"].get<int>(), 1);
+    EXPECT_EQ(j["data"]["tags"][1]["id"].get<int>(), 5);
+    // samples：只 2 个
+    ASSERT_EQ(j["data"]["sample_testcases"].size(), 2u);
+    EXPECT_EQ(j["data"]["sample_testcases"][0]["case_index"].get<int>(), 1);
+    EXPECT_EQ(j["data"]["sample_testcases"][0]["input"], "in1");
+    EXPECT_EQ(j["data"]["sample_testcases"][0]["expected_output"], "out1");
+    EXPECT_TRUE(j["data"]["sample_testcases"][0]["is_sample"].get<bool>());
+    EXPECT_EQ(j["data"]["sample_testcases"][0]["score"].get<int>(), 40);
+    EXPECT_EQ(j["data"]["sample_testcases"][1]["case_index"].get<int>(), 2);
+    // hidden 不出现
+    for (const auto& c : j["data"]["sample_testcases"]) {
+        EXPECT_NE(c["case_index"].get<int>(), 3);
+    }
+}
+
+TEST_F(T, EndToEndDetailReturns404ForMissing) {
+    ScopedServer srv(19701);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return cli_->is_ready(); });
+    srv.start();
+
+    auto res = cli(19701).Get("/api/problems/99999999");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 404);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1004);
+}
+
+TEST_F(T, EndToEndDetailReturns404ForUnpublished) {
+    mkP("oj_api_detail_draft", Difficulty::Easy, /*pub=*/false);
+    // 找出刚插入的 id
+    std::int64_t id = 0;
+    {
+        auto lease = cli_->acquire();
+        const std::string sql = "SELECT id FROM problems WHERE title='oj_api_detail_draft'";
+        mysql_real_query(lease.raw(), sql.data(), static_cast<unsigned long>(sql.size()));
+        MYSQL_RES* r = mysql_store_result(lease.raw());
+        if (r) {
+            MYSQL_ROW row = mysql_fetch_row(r);
+            if (row && row[0]) id = std::stoll(row[0]);
+            mysql_free_result(r);
+        }
+    }
+    ASSERT_GT(id, 0);
+
+    ScopedServer srv(19702);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return cli_->is_ready(); });
+    srv.start();
+
+    auto res = cli(19702).Get("/api/problems/" + std::to_string(id));
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 404);
+}
+
+TEST_F(T, EndToEndDetailInvalidIdReturns400) {
+    ScopedServer srv(19703);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return cli_->is_ready(); });
+    srv.start();
+
+    auto res = cli(19703).Get("/api/problems/abc");
+    ASSERT_TRUE(res != nullptr);
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST_F(T, EndToEndDetailDbDownReturns1008) {
+    ScopedServer srv(19704);
+    oj::http::handlers::register_problem_routes(
+        srv.server(), svc_, [this] { return false; /* DB down */ });
+    srv.start();
+
+    auto res = cli(19704).Get("/api/problems/1");
     ASSERT_TRUE(res != nullptr);
     EXPECT_EQ(res->status, 500);
     auto j = nlohmann::json::parse(res->body);

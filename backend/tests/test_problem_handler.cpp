@@ -33,6 +33,8 @@
 #include "domain/problem_repository.hpp"
 #include "domain/problem_service.hpp"
 #include "domain/problem_types.hpp"
+#include "domain/tag_repository.hpp"
+#include "domain/testcase_repository.hpp"
 #include "http/HttpServer.hpp"
 #include "http/handlers/problem_handler.hpp"
 
@@ -122,6 +124,16 @@ public:
     void soft_delete(std::int64_t) override { throw std::runtime_error("nope"); }
     void set_published(std::int64_t, bool) override { throw std::runtime_error("nope"); }
     std::pair<int,int> submission_stats(std::int64_t) override { return {0,0}; }
+    std::optional<Problem> find_by_id_(std::int64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto& p : problems_) if (p.id == id) return p;
+        return std::nullopt;
+    }
+    std::vector<Tag> tags_of_(std::int64_t id) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto t = tag_of_.find(id);
+        return t == tag_of_.end() ? std::vector<Tag>{} : t->second;
+    }
 
     void add(Problem p, std::vector<Tag> tags = {}) {
         std::lock_guard<std::mutex> lk(mu_);
@@ -143,6 +155,59 @@ private:
     std::vector<Problem> problems_;
     std::map<std::int64_t, std::vector<Tag>> tag_of_;
     std::map<std::string, int>             tag_table_;  // slug → id
+};
+
+// 极简 mock —— get_detail 需要 list_samples + tags_of_problem；
+// list 测试不需要它们，但 ProblemService 构造时要求 3 个 repo 都在场
+class MinimalTestcaseRepo : public oj::domain::ITestcaseRepository {
+public:
+    std::vector<oj::domain::Testcase> list_by_problem(std::int64_t) override { return {}; }
+    std::vector<oj::domain::Testcase> list_samples(std::int64_t) override { return {}; }
+    void create_many(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void replace_by_problem(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void delete_by_problem(std::int64_t) override {}
+};
+class MinimalTagRepo : public oj::domain::ITagRepository {
+public:
+    std::vector<oj::domain::Tag> list_all() override { return {}; }
+    std::optional<oj::domain::Tag> find_by_id(int) override { return std::nullopt; }
+    std::optional<oj::domain::Tag> find_by_slug(const std::string&) override { return std::nullopt; }
+    std::vector<oj::domain::Tag> find_by_ids(const std::vector<int>&) override { return {}; }
+    std::vector<oj::domain::Tag> tags_of_problem(std::int64_t) override { return {}; }
+    std::vector<int> tag_ids_of_problem(std::int64_t) override { return {}; }
+    void set_problem_tags(std::int64_t, const std::vector<int>&) override {}
+};
+
+// 富 testcase mock —— get_detail 测试要 list_samples 真正按 is_sample 过滤
+class InMemoryTestcaseRepo : public oj::domain::ITestcaseRepository {
+public:
+    std::vector<oj::domain::Testcase> list_by_problem(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Testcase> out;
+        for (const auto& c : cases_) if (c.problem_id == pid) out.push_back(c);
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.case_index < b.case_index; });
+        return out;
+    }
+    std::vector<oj::domain::Testcase> list_samples(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Testcase> out;
+        for (const auto& c : cases_) if (c.problem_id == pid && c.is_sample) out.push_back(c);
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.case_index < b.case_index; });
+        return out;
+    }
+    void create_many(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void replace_by_problem(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void delete_by_problem(std::int64_t) override {}
+    void seed(std::int64_t pid, oj::domain::Testcase c) {
+        std::lock_guard<std::mutex> lk(mu_);
+        c.problem_id = pid;
+        cases_.push_back(c);
+    }
+private:
+    mutable std::mutex mu_;
+    std::vector<oj::domain::Testcase> cases_;
 };
 
 AppConfig make_cfg(uint16_t port) {
@@ -197,7 +262,7 @@ struct ServerBundle {
 ServerBundle make_server(uint16_t port) {
     ServerBundle b;
     b.repo    = std::make_shared<InMemoryProblemRepository>();
-    b.service = std::make_shared<ProblemService>(b.repo);
+    b.service = std::make_shared<ProblemService>(b.repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     b.server  = std::make_unique<ScopedServer>(port);
     auto ready_ptr = b.db_ready;
     oj::http::handlers::register_problem_routes(
@@ -511,6 +576,198 @@ TEST(ProblemListHandlerTest, PutReturns404) {
     b.server->start();
     auto res = make_client(19518).Put("/api/problems", "{}", "application/json");
     if (!res) GTEST_SKIP() << "port 19518 not reachable";
+    EXPECT_EQ(res->status, 404);
+}
+
+// ===========================================================================
+//  GET /api/problems/:id  ——  SPEC §5.2.2 + §3.3.5 H
+// ===========================================================================
+//
+//  Detail handler 用 3 个 repo —— make_server_detail() 走富 testcase repo
+//
+struct DetailBundle {
+    std::unique_ptr<ScopedServer>              server;
+    std::shared_ptr<InMemoryProblemRepository> repo;
+    std::shared_ptr<InMemoryTestcaseRepo>      testcases;
+    std::shared_ptr<MinimalTagRepo>            tags;
+    std::shared_ptr<ProblemService>            service;
+    std::shared_ptr<std::atomic<bool>>         db_ready{std::make_shared<std::atomic<bool>>(true)};
+};
+
+DetailBundle make_detail_server(uint16_t port) {
+    DetailBundle b;
+    b.repo      = std::make_shared<InMemoryProblemRepository>();
+    b.testcases = std::make_shared<InMemoryTestcaseRepo>();
+    b.tags      = std::make_shared<MinimalTagRepo>();  // tags 走 service → find 路径用不到
+    b.service   = std::make_shared<ProblemService>(b.repo, b.testcases, b.tags);
+    b.server    = std::make_unique<ScopedServer>(port);
+    auto ready_ptr = b.db_ready;
+    oj::http::handlers::register_problem_routes(
+        b.server->server(), b.service,
+        [ready_ptr] { return ready_ptr->load(std::memory_order_acquire); });
+    return b;
+}
+
+TEST(ProblemDetailHandlerTest, Returns200ForPublishedProblem) {
+    DetailBundle b = make_detail_server(19700);
+    b.repo->add(mkP("两数之和", Difficulty::Easy, true));
+    b.server->start();
+
+    auto res = make_client(19700).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19700 not reachable";
+    ASSERT_EQ(res->status, 200);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 0);
+    EXPECT_EQ(j["data"]["id"].get<int>(), 1);
+    EXPECT_EQ(j["data"]["title"], "两数之和");
+    EXPECT_EQ(j["data"]["difficulty"], "easy");
+    EXPECT_EQ(j["data"]["is_published"], true);
+}
+
+TEST(ProblemDetailHandlerTest, CarriesAllSpecFields) {
+    DetailBundle b = make_detail_server(19701);
+    b.repo->add(mkP("p", Difficulty::Hard, true));
+    b.server->start();
+
+    auto res = make_client(19701).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19701 not reachable";
+    auto j = nlohmann::json::parse(res->body);
+    const auto& d = j["data"];
+    EXPECT_TRUE(d.contains("id"));
+    EXPECT_TRUE(d.contains("title"));
+    EXPECT_TRUE(d.contains("content_md"));
+    EXPECT_TRUE(d.contains("difficulty"));
+    EXPECT_TRUE(d.contains("tags"));
+    EXPECT_TRUE(d.contains("time_limit_ms"));
+    EXPECT_TRUE(d.contains("memory_limit_mb"));
+    EXPECT_TRUE(d.contains("output_limit_mb"));
+    EXPECT_TRUE(d.contains("is_published"));
+    EXPECT_TRUE(d.contains("created_by"));
+    EXPECT_TRUE(d.contains("created_at"));
+    EXPECT_TRUE(d.contains("sample_testcases"));
+}
+
+TEST(ProblemDetailHandlerTest, DifficultySerializesAsString) {
+    DetailBundle b = make_detail_server(19702);
+    b.repo->add(mkP("p1", Difficulty::Medium, true));
+    b.server->start();
+    auto res = make_client(19702).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19702 not reachable";
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["data"]["difficulty"], "medium");
+}
+
+TEST(ProblemDetailHandlerTest, Returns404ForMissing) {
+    DetailBundle b = make_detail_server(19703);
+    b.server->start();
+    auto res = make_client(19703).Get("/api/problems/9999");
+    if (!res) GTEST_SKIP() << "port 19703 not reachable";
+    EXPECT_EQ(res->status, 404);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1004);
+}
+
+TEST(ProblemDetailHandlerTest, Returns404ForUnpublishedByDefault) {
+    DetailBundle b = make_detail_server(19704);
+    b.repo->add(mkP("draft", Difficulty::Easy, /*pub=*/false));
+    b.server->start();
+    auto res = make_client(19704).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19704 not reachable";
+    EXPECT_EQ(res->status, 404);
+}
+
+TEST(ProblemDetailHandlerTest, ReturnsOnlySampleTestcases) {
+    DetailBundle b = make_detail_server(19705);
+    b.repo->add(mkP("p", Difficulty::Easy, true));
+
+    // 3 sample + 1 hidden
+    oj::domain::Testcase s1; s1.case_index = 1; s1.input = "1 2"; s1.expected_output = "3";
+    s1.is_sample = true; s1.score = 30;
+    oj::domain::Testcase s2; s2.case_index = 2; s2.input = "10 20"; s2.expected_output = "30";
+    s2.is_sample = true; s2.score = 30;
+    oj::domain::Testcase s3; s3.case_index = 3; s3.input = "100 200"; s3.expected_output = "300";
+    s3.is_sample = true; s3.score = 30;
+    oj::domain::Testcase h4; h4.case_index = 4; h4.input = "secret"; h4.expected_output = "secret";
+    h4.is_sample = false; h4.score = 10;
+    b.testcases->seed(1, s1);
+    b.testcases->seed(1, s2);
+    b.testcases->seed(1, s3);
+    b.testcases->seed(1, h4);
+
+    b.server->start();
+    auto res = make_client(19705).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19705 not reachable";
+    auto j = nlohmann::json::parse(res->body);
+    const auto& cases = j["data"]["sample_testcases"];
+    ASSERT_EQ(cases.size(), 3u);
+    EXPECT_EQ(cases[0]["case_index"].get<int>(), 1);
+    EXPECT_EQ(cases[0]["input"], "1 2");
+    EXPECT_EQ(cases[0]["expected_output"], "3");
+    EXPECT_TRUE(cases[0]["is_sample"].get<bool>());
+    EXPECT_EQ(cases[0]["score"].get<int>(), 30);
+    // hidden case_index=4 不出现
+    for (const auto& c : cases) {
+        EXPECT_NE(c["case_index"].get<int>(), 4);
+    }
+}
+
+TEST(ProblemDetailHandlerTest, EmptySamplesReturnsEmptyArray) {
+    DetailBundle b = make_detail_server(19706);
+    b.repo->add(mkP("p", Difficulty::Easy, true));
+    b.server->start();
+    auto res = make_client(19706).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19706 not reachable";
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_TRUE(j["data"]["sample_testcases"].is_array());
+    EXPECT_EQ(j["data"]["sample_testcases"].size(), 0u);
+}
+
+TEST(ProblemDetailHandlerTest, TagsArrayIsAlwaysPresentEvenIfEmpty) {
+    DetailBundle b = make_detail_server(19707);
+    b.repo->add(mkP("p", Difficulty::Easy, true));
+    b.server->start();
+    auto res = make_client(19707).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19707 not reachable";
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_TRUE(j["data"]["tags"].is_array());
+    EXPECT_EQ(j["data"]["tags"].size(), 0u);
+}
+
+TEST(ProblemDetailHandlerTest, InvalidIdReturns400) {
+    DetailBundle b = make_detail_server(19708);
+    b.server->start();
+    auto res = make_client(19708).Get("/api/problems/abc");
+    if (!res) GTEST_SKIP() << "port 19708 not reachable";
+    EXPECT_EQ(res->status, 400);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1001);
+}
+
+TEST(ProblemDetailHandlerTest, ZeroIdReturns400) {
+    DetailBundle b = make_detail_server(19709);
+    b.server->start();
+    auto res = make_client(19709).Get("/api/problems/0");
+    if (!res) GTEST_SKIP() << "port 19709 not reachable";
+    EXPECT_EQ(res->status, 400);
+}
+
+TEST(ProblemDetailHandlerTest, DbDownReturns1008) {
+    DetailBundle b = make_detail_server(19710);
+    b.repo->add(mkP("p", Difficulty::Easy, true));
+    b.server->start();
+    b.db_ready->store(false, std::memory_order_release);
+    auto res = make_client(19710).Get("/api/problems/1");
+    if (!res) GTEST_SKIP() << "port 19710 not reachable";
+    EXPECT_EQ(res->status, 500);
+    auto j = nlohmann::json::parse(res->body);
+    EXPECT_EQ(j["code"].get<int>(), 1008);
+}
+
+TEST(ProblemDetailHandlerTest, PostReturns404) {
+    DetailBundle b = make_detail_server(19711);
+    b.server->start();
+    auto res = make_client(19711).Post("/api/problems/1", "{}", "application/json");
+    if (!res) GTEST_SKIP() << "port 19711 not reachable";
     EXPECT_EQ(res->status, 404);
 }
 

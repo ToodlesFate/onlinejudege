@@ -3,10 +3,10 @@
 // =============================================================================
 //  oj::http::handlers::problem —— 题目相关 HTTP 入口
 //  本阶段实现：
-//    - GET /api/problems   公开列表 (分页/过滤/排序) —— SPEC §5.2.2
+//    - GET /api/problems        公开列表 (分页/过滤/排序) —— SPEC §5.2.2
+//    - GET /api/problems/:id    公开详情 (题面 + 样例点) —— SPEC §5.2.2
 //
 //  后续阶段（本任务范围外）：
-//    - GET /api/problems/{id}  详情 + 样例点
 //    - GET /api/tags
 //    - GET /api/admin/problems
 //    - POST /api/admin/problems

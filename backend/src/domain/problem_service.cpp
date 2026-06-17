@@ -158,7 +158,29 @@ ProblemListResult ProblemService::list(const ProblemListQuery& q) {
     ProblemListQuery sane = q;
     if (sane.page < 1) sane.page = 1;
     sane.page_size = sanitize_page_size(sane.page_size);
-    return repo_->list(sane);
+    return problems_->list(sane);
+}
+
+// ---------------------------------------------------------------------------
+//  ProblemService::get_detail
+//
+//  流程：
+//   1) repo.find_by_id(id) → 找不到 / 公开访问但 is_published=0 → nullopt
+//   2) tags_of_problem(id) → 关联 tag 列表
+//   3) list_samples(id) → 仅 is_sample=1 的样例
+// ---------------------------------------------------------------------------
+std::optional<ProblemDetail>
+ProblemService::get_detail(std::int64_t id, bool include_unpublished) {
+    auto p = problems_->find_by_id(id);
+    if (!p.has_value()) return std::nullopt;
+    if (!include_unpublished && !p->is_published) return std::nullopt;
+
+    ProblemDetail d;
+    d.problem          = std::move(*p);
+    d.tags             = tags_      ? tags_->tags_of_problem(id)         : std::vector<Tag>{};
+    d.sample_testcases = testcases_ ? testcases_->list_samples(id)       : std::vector<Testcase>{};
+    return d;
 }
 
 }  // namespace oj::domain
+

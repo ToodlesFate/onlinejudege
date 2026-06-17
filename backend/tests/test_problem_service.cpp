@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -25,6 +26,8 @@
 #include "domain/problem_repository.hpp"
 #include "domain/problem_service.hpp"
 #include "domain/problem_types.hpp"
+#include "domain/tag_repository.hpp"
+#include "domain/testcase_repository.hpp"
 
 namespace {
 
@@ -353,9 +356,151 @@ TEST(ProblemListQueryParseTest, AdminApiDefaultsIncludeUnpublishedFalse) {
 // ===========================================================================
 //  ProblemService 行为测试（用 InMemoryProblemRepository）
 // ===========================================================================
+
+// 极简 mock —— get_detail 路径才会用到；list 路径不访问
+class MinimalTestcaseRepo : public oj::domain::ITestcaseRepository {
+public:
+    std::vector<oj::domain::Testcase> list_by_problem(std::int64_t) override { return {}; }
+    std::vector<oj::domain::Testcase> list_samples(std::int64_t) override { return {}; }
+    void create_many(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void replace_by_problem(std::int64_t, const std::vector<oj::domain::Testcase>&) override {}
+    void delete_by_problem(std::int64_t) override {}
+};
+class MinimalTagRepo : public oj::domain::ITagRepository {
+public:
+    std::vector<oj::domain::Tag> list_all() override { return {}; }
+    std::optional<oj::domain::Tag> find_by_id(int) override { return std::nullopt; }
+    std::optional<oj::domain::Tag> find_by_slug(const std::string&) override { return std::nullopt; }
+    std::vector<oj::domain::Tag> find_by_ids(const std::vector<int>&) override { return {}; }
+    std::vector<oj::domain::Tag> tags_of_problem(std::int64_t) override { return {}; }
+    std::vector<int> tag_ids_of_problem(std::int64_t) override { return {}; }
+    void set_problem_tags(std::int64_t, const std::vector<int>&) override {}
+};
+
+// 富 mock —— get_detail 路径需要 list_samples + tags_of_problem 真实行为
+class InMemoryTestcaseRepo : public oj::domain::ITestcaseRepository {
+public:
+    std::vector<oj::domain::Testcase> list_by_problem(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Testcase> out;
+        for (const auto& c : cases_) {
+            if (c.problem_id == pid) out.push_back(c);
+        }
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.case_index < b.case_index; });
+        return out;
+    }
+    std::vector<oj::domain::Testcase> list_samples(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Testcase> out;
+        for (const auto& c : cases_) {
+            if (c.problem_id == pid && c.is_sample) out.push_back(c);
+        }
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.case_index < b.case_index; });
+        return out;
+    }
+    void create_many(std::int64_t pid, const std::vector<oj::domain::Testcase>& v) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto& c : v) {
+            oj::domain::Testcase copy = c;
+            copy.problem_id = pid;
+            cases_.push_back(copy);
+        }
+    }
+    void replace_by_problem(std::int64_t pid, const std::vector<oj::domain::Testcase>& v) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        cases_.erase(std::remove_if(cases_.begin(), cases_.end(),
+                                     [pid](const oj::domain::Testcase& c) { return c.problem_id == pid; }),
+                     cases_.end());
+        for (auto& c : v) {
+            oj::domain::Testcase copy = c;
+            copy.problem_id = pid;
+            cases_.push_back(copy);
+        }
+    }
+    void delete_by_problem(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        cases_.erase(std::remove_if(cases_.begin(), cases_.end(),
+                                     [pid](const oj::domain::Testcase& c) { return c.problem_id == pid; }),
+                     cases_.end());
+    }
+    void seed(std::int64_t pid, oj::domain::Testcase c) {
+        std::lock_guard<std::mutex> lk(mu_);
+        c.problem_id = pid;
+        cases_.push_back(c);
+    }
+private:
+    mutable std::mutex mu_;
+    std::vector<oj::domain::Testcase> cases_;
+};
+class InMemoryTagRepo : public oj::domain::ITagRepository {
+public:
+    std::vector<oj::domain::Tag> list_all() override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Tag> out;
+        for (const auto& [_, t] : tags_) out.push_back(t);
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.id < b.id; });
+        return out;
+    }
+    std::optional<oj::domain::Tag> find_by_id(int id) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = tags_.find(id);
+        return it == tags_.end() ? std::nullopt
+                                   : std::optional<oj::domain::Tag>(it->second);
+    }
+    std::optional<oj::domain::Tag> find_by_slug(const std::string& slug) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto& [_, t] : tags_) if (t.slug == slug) return t;
+        return std::nullopt;
+    }
+    std::vector<oj::domain::Tag> find_by_ids(const std::vector<int>& ids) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Tag> out;
+        for (int id : ids) {
+            auto it = tags_.find(id);
+            if (it != tags_.end()) out.push_back(it->second);
+        }
+        return out;
+    }
+    std::vector<oj::domain::Tag> tags_of_problem(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<oj::domain::Tag> out;
+        auto range = prob_tag_.equal_range(pid);
+        for (auto it = range.first; it != range.second; ++it) {
+            auto t = tags_.find(it->second);
+            if (t != tags_.end()) out.push_back(t->second);
+        }
+        std::sort(out.begin(), out.end(),
+                  [](const auto& a, const auto& b) { return a.id < b.id; });
+        return out;
+    }
+    std::vector<int> tag_ids_of_problem(std::int64_t pid) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        std::vector<int> out;
+        auto range = prob_tag_.equal_range(pid);
+        for (auto it = range.first; it != range.second; ++it) out.push_back(it->second);
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    void set_problem_tags(std::int64_t pid, const std::vector<int>& tag_ids) override {
+        std::lock_guard<std::mutex> lk(mu_);
+        prob_tag_.erase(pid);
+        for (int id : tag_ids) prob_tag_.emplace(pid, id);
+    }
+    void seed_tag(oj::domain::Tag t) {
+        std::lock_guard<std::mutex> lk(mu_);
+        tags_[t.id] = t;
+    }
+private:
+    mutable std::mutex mu_;
+    std::map<int, oj::domain::Tag>             tags_;
+    std::multimap<std::int64_t, int>           prob_tag_;  // pid → tag_id
+};
 TEST(ProblemServiceTest, DelegatesListToRepo) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     repo->add(mkP("p1", Difficulty::Easy,   true));
     repo->add(mkP("p2", Difficulty::Medium, true));
 
@@ -369,7 +514,7 @@ TEST(ProblemServiceTest, DelegatesListToRepo) {
 
 TEST(ProblemServiceTest, ListSanitizesPageSizeToWhitelist) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     for (int i = 0; i < 30; ++i) {
         repo->add(mkP("p" + std::to_string(i), Difficulty::Easy, true));
     }
@@ -384,7 +529,7 @@ TEST(ProblemServiceTest, ListSanitizesPageSizeToWhitelist) {
 
 TEST(ProblemServiceTest, ListSanitizesPageLessThan1) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     repo->add(mkP("p1", Difficulty::Easy, true));
     ProblemListQuery q;
     q.page = 0;
@@ -394,7 +539,7 @@ TEST(ProblemServiceTest, ListSanitizesPageLessThan1) {
 
 TEST(ProblemServiceTest, ListAcceptsSize10And50) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     for (int i = 0; i < 100; ++i) {
         repo->add(mkP("p" + std::to_string(i), Difficulty::Easy, true));
     }
@@ -410,7 +555,7 @@ TEST(ProblemServiceTest, ListAcceptsSize10And50) {
 
 TEST(ProblemServiceTest, ListFiltersByDifficulty) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     repo->add(mkP("e1", Difficulty::Easy,   true));
     repo->add(mkP("e2", Difficulty::Easy,   true));
     repo->add(mkP("h1", Difficulty::Hard,   true));
@@ -424,7 +569,7 @@ TEST(ProblemServiceTest, ListFiltersByDifficulty) {
 
 TEST(ProblemServiceTest, ListExcludesUnpublishedByDefault) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     repo->add(mkP("pub",  Difficulty::Easy, true));
     repo->add(mkP("priv", Difficulty::Easy, false));
     auto r = svc->list({});
@@ -434,7 +579,7 @@ TEST(ProblemServiceTest, ListExcludesUnpublishedByDefault) {
 
 TEST(ProblemServiceTest, ListSortsByPassRateDesc) {
     auto repo = std::make_shared<InMemoryProblemRepository>();
-    auto svc  = std::make_shared<ProblemService>(repo);
+    auto svc  = std::make_shared<ProblemService>(repo, std::make_shared<MinimalTestcaseRepo>(), std::make_shared<MinimalTagRepo>());
     // 按 id 顺序插入：
     //   a (id=1): 1/10 = 0.1
     //   b (id=2): 3/10 = 0.3
@@ -455,6 +600,120 @@ TEST(ProblemServiceTest, ListSortsByPassRateDesc) {
     EXPECT_EQ(r.items[2].title, "c");  // 0.5
     EXPECT_EQ(r.items[3].title, "b");  // 0.3
     EXPECT_EQ(r.items[4].title, "a");  // 0.1
+}
+
+// ===========================================================================
+//  get_detail —— ProblemService 行为测试
+// ===========================================================================
+TEST(ProblemServiceGetDetailTest, ReturnsNulloptForMissingId) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    auto d = svc->get_detail(999, /*include_unpublished=*/false);
+    EXPECT_FALSE(d.has_value());
+}
+
+TEST(ProblemServiceGetDetailTest, ReturnsNulloptForUnpublishedWhenGateOff) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    repo->add(mkP("draft", Difficulty::Easy, /*pub=*/false));
+    auto d = svc->get_detail(1, /*include_unpublished=*/false);
+    EXPECT_FALSE(d.has_value());
+}
+
+TEST(ProblemServiceGetDetailTest, ReturnsDraftWhenAdminGateOn) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    repo->add(mkP("draft", Difficulty::Easy, /*pub=*/false));
+    auto d = svc->get_detail(1, /*include_unpublished=*/true);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(d->problem.id, 1);
+    EXPECT_FALSE(d->problem.is_published);
+}
+
+TEST(ProblemServiceGetDetailTest, ReturnsFullDetailForPublished) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    repo->add(mkP("两数之和", Difficulty::Easy, /*pub=*/true));
+
+    // 灌 2 个 tag
+    oj::domain::Tag arr{1, "数组", "数组"};
+    oj::domain::Tag dp{7, "动态规划", "dp"};
+    tags->seed_tag(arr);
+    tags->seed_tag(dp);
+    tags->set_problem_tags(1, {1, 7});
+
+    // 灌 4 个 testcase：3 个 sample + 1 个 hidden
+    oj::domain::Testcase c1; c1.case_index = 1; c1.input = "1 2"; c1.expected_output = "3";
+    c1.is_sample = true; c1.score = 25;
+    oj::domain::Testcase c2; c2.case_index = 2; c2.input = "10 20"; c2.expected_output = "30";
+    c2.is_sample = true; c2.score = 25;
+    oj::domain::Testcase c3; c3.case_index = 3; c3.input = "100 200"; c3.expected_output = "300";
+    c3.is_sample = true; c3.score = 25;
+    oj::domain::Testcase c4; c4.case_index = 4; c4.input = "big"; c4.expected_output = "big";
+    c4.is_sample = false; c4.score = 25;
+    cases->seed(1, c1);
+    cases->seed(1, c2);
+    cases->seed(1, c3);
+    cases->seed(1, c4);
+
+    auto d = svc->get_detail(1, /*include_unpublished=*/false);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(d->problem.id, 1);
+    EXPECT_EQ(d->problem.title, "两数之和");
+    EXPECT_EQ(d->problem.difficulty, Difficulty::Easy);
+    EXPECT_TRUE(d->problem.is_published);
+    EXPECT_EQ(d->problem.time_limit_ms, 2000);
+    EXPECT_EQ(d->problem.memory_limit_mb, 256);
+    // tags：按 id ASC
+    ASSERT_EQ(d->tags.size(), 2u);
+    EXPECT_EQ(d->tags[0].id, 1);
+    EXPECT_EQ(d->tags[0].name, "数组");
+    EXPECT_EQ(d->tags[1].id, 7);
+    EXPECT_EQ(d->tags[1].name, "动态规划");
+    // sample_testcases：只 3 个，hidden 被过滤
+    ASSERT_EQ(d->sample_testcases.size(), 3u);
+    EXPECT_EQ(d->sample_testcases[0].case_index, 1);
+    EXPECT_EQ(d->sample_testcases[0].input, "1 2");
+    EXPECT_EQ(d->sample_testcases[0].expected_output, "3");
+    EXPECT_TRUE(d->sample_testcases[0].is_sample);
+    EXPECT_EQ(d->sample_testcases[2].case_index, 3);
+}
+
+TEST(ProblemServiceGetDetailTest, ReturnsEmptyTagsAndSamplesForProblemWithoutThem) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    repo->add(mkP("plain", Difficulty::Easy, true));
+    auto d = svc->get_detail(1, false);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_TRUE(d->tags.empty());
+    EXPECT_TRUE(d->sample_testcases.empty());
+}
+
+TEST(ProblemServiceGetDetailTest, NoTestCasesReturnsEmptySamples) {
+    auto repo   = std::make_shared<InMemoryProblemRepository>();
+    auto cases  = std::make_shared<InMemoryTestcaseRepo>();
+    auto tags   = std::make_shared<InMemoryTagRepo>();
+    auto svc    = std::make_shared<ProblemService>(repo, cases, tags);
+    repo->add(mkP("p", Difficulty::Easy, true));
+    oj::domain::Testcase only_hidden;
+    only_hidden.case_index = 1;
+    only_hidden.input = "x"; only_hidden.expected_output = "y";
+    only_hidden.is_sample = false; only_hidden.score = 100;
+    cases->seed(1, only_hidden);
+    auto d = svc->get_detail(1, false);
+    ASSERT_TRUE(d.has_value());
+    EXPECT_TRUE(d->sample_testcases.empty())
+        << "hidden test cases must not be returned to public";
 }
 
 }  // namespace

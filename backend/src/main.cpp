@@ -38,6 +38,8 @@
 #include "infra/mysql_client.hpp"
 #include "infra/password_hasher.hpp"
 #include "infra/problem_repo.hpp"
+#include "infra/tag_repo.hpp"
+#include "infra/testcase_repo.hpp"
 #include "infra/user_repo.hpp"
 
 namespace {
@@ -224,7 +226,10 @@ int main(int argc, char** argv) {
     //  Problem 域装配 —— repo (Infra) + service (Domain) + handler (Http)
     // -------------------------------------------------------------------
     auto problems_repo    = std::make_shared<infra::MysqlProblemRepo>(mysql);
-    auto problem_service  = std::make_shared<domain::ProblemService>(problems_repo);
+    auto testcases_repo   = std::make_shared<infra::MysqlTestcaseRepo>(mysql);
+    auto tags_repo         = std::make_shared<infra::MysqlTagRepo>(mysql);
+    auto problem_service  = std::make_shared<domain::ProblemService>(
+        problems_repo, testcases_repo, tags_repo);
 
     // -------------------------------------------------------------------
     //  Http 层
