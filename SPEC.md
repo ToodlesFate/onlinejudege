@@ -1262,7 +1262,7 @@ open http://localhost
 ### Phases 5 - 后台管理
 - [x] admin API：CRUD + 上下架
 - [x] 前端：管理后台题目列表 + Monaco Markdown 编辑器 + 客户端预览
-- [ ] 测试点动态增删 + 校验总分 = 100
+- [x] 测试点动态增删 + 校验总分 = 100
 
 ### Phases 6 - 提交历史 + 详情
 - [ ] 提交列表（个人 / 公共）
@@ -1461,6 +1461,43 @@ open http://localhost
 
 **结论**：Phase 2 第 2 项 `/api/auth/register 实现首注册为 admin 逻辑` 通过验收，
 进入下一项 `/api/auth/login + JWT 颁发`。
+
+---
+
+### 9.8 Phase 5 — 测试点动态增删 + 校验总分 = 100（已通过）
+> 触发条件：SPEC §8 TODO「Phases 5 - 后台管理」第 3 项已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与单元测试矩阵见
+> [`docs/phase5-verification.md`](docs/phase5-verification.md)。
+
+**验证时间**：2026-06-17
+**验证环境**：Node 22 / Debian 12 (bookworm)
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 5-3a | 动态增删行（+ 添加 / ✕ 删除） | `admin-problem-edit.js#addCase/#removeCase` + 表格模板 | ✅ |
+| 5-3b | 删除最后一个 case → 阻止 + toast | `removeCase` `if (state.cases.length <= 1)` | ✅ |
+| 5-3c | `validateTotal(cases)` pure function | `utils/problem-cases.js` + 27 项单测 | ✅ |
+| 5-3d | sum=100 → ok；sum≠100 → err + "当前 X" | problem-cases.test.mjs 4 项 sum 边界 | ✅ |
+| 5-3e | score 越界（负数 / >100 / NaN / 3.5）→ err + firstBad | 5 项单测 + UI 行高亮闪烁 | ✅ |
+| 5-3f | 数量 1/100/101 → 边界 | 3 项单测 | ✅ |
+| 5-3g | 实时显示「总分: X / 100」+ 颜色态 | `.ape-cases-summary__total--ok/--err` | ✅ |
+| 5-3h | **AC-6：总分 ≠ 100 时 [保存]/[发布] 按钮 disabled** | `updateTotalDisplay()` 同步两按钮 `disabled` | ✅ |
+| 5-3i | "校验总分"按钮 + toast + 滚动/高亮 | `validateBtn` `onClick` + `.ape-case-row--bad` | ✅ |
+| 5-3j | 后端兜底 `sum=100` 校验（双校验） | `problem_service.cpp:253-280` `validate_cases` 已有 | ✅ |
+| 5-3k | JS 语法 + 全部前端单测 102/102 通过 | `node --check` + 5 个 test 文件全过 | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `frontend/js/utils/problem-cases.js` | 新增 | pure `validateTotal(cases)` + 常量 + `normalizeScores` |
+| `frontend/js/views/admin-problem-edit.js` | 修改 | 集成 `validateTotal` + 实时 `updateTotalDisplay` + summary UI + 校验按钮 |
+| `frontend/css/admin-page.css` | 修改 | `.ape-cases-summary*` / `.ape-cases-validate` / `.ape-case-row--bad` |
+| `frontend/tests/problem-cases.test.mjs` | 新增 | 27 项单测 |
+| `docs/phase5-verification.md` | 新增 | 本次验收报告 |
+
+**结论**：Phase 5「后台管理」全部三项完成。进入 Phase 6（提交历史 + 详情）。
 
 ---
 

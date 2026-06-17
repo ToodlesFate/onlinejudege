@@ -408,3 +408,104 @@
 .ape-cases-hint {
     font-size: var(--fs-xs);
 }
+
+/* ---- 测试点 summary：数量 + 总分 + 校验按钮 (SPEC §2.5 / AC-6) ---- */
+.ape-cases-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    margin-top: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    flex-wrap: wrap;
+}
+
+.ape-cases-summary__left,
+.ape-cases-summary__right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.ape-cases-summary__total {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--sp-1);
+    font-size: var(--fs-sm);
+    color: var(--fg-1);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    transition:
+        background var(--t-fast) var(--ease-out),
+        border-color var(--t-fast) var(--ease-out),
+        color var(--t-fast) var(--ease-out);
+}
+
+.ape-cases-summary__num {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: var(--fs-md);
+    color: var(--fg-0);
+    min-width: 2ch;
+    text-align: center;
+}
+
+.ape-cases-summary__total--ok {
+    background: rgba(74, 222, 128, 0.10);
+    border-color: rgba(74, 222, 128, 0.40);
+    color: var(--ok);
+}
+.ape-cases-summary__total--ok .ape-cases-summary__num {
+    color: var(--ok);
+}
+
+.ape-cases-summary__total--err {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.40);
+    color: var(--err);
+}
+.ape-cases-summary__total--err .ape-cases-summary__num {
+    color: var(--err);
+}
+
+.ape-cases-summary__msg {
+    font-size: var(--fs-xs);
+    color: var(--fg-2);
+    transition: color var(--t-fast) var(--ease-out);
+}
+
+.ape-cases-summary__msg--ok {
+    color: var(--ok);
+}
+
+.ape-cases-summary__msg--err {
+    color: var(--err);
+    font-weight: 500;
+}
+
+.ape-cases-validate {
+    min-width: 92px;
+}
+
+.ape-cases-validate.is-ok {
+    /* 校验通过时按钮置灰，避免误导用户重复点击 */
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 校验失败的某一行高亮（短闪） */
+.ape-case-row--bad {
+    animation: ape-row-bad 1.5s var(--ease-out);
+}
+
+@keyframes ape-row-bad {
+    0%   { background: rgba(239, 68, 68, 0.30); }
+    100% { background: transparent; }
+}

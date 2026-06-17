@@ -34,6 +34,7 @@ import { authStore } from '../store/state.js';
 import { navigate } from '../router.js';
 import { toast } from '../components/toast.js';
 import { ApiError, HttpError } from '../api/client.js';
+import { validateTotal, kCaseMax } from '../utils/problem-cases.js';
 
 // 表单默认值（与 SPEC §2.2.1 一致）
 const DEFAULTS = {
@@ -49,6 +50,8 @@ const DEFAULTS = {
         { case_index: 1, input: '', expected_output: '', is_sample: false, score: 0 },
     ],
 };
+
+// kCaseMax / validateTotal 来自 utils/problem-cases.js（见文件顶部 import）
 
 // 默认题面模板：放进新建题目的 textarea，给 admin 一个 markdown 示例可参考
 const DEFAULT_CONTENT_MD =
@@ -416,7 +419,59 @@ export default async function adminProblemEditView(params /*, query */) {
     rightCol.appendChild(statusBar);
 
     // ---- 渲染测试点 ----
+    // 总分相关 DOM 引用（renderCasesSection 中创建，updateTotalDisplay 中刷新）
+    let totalEl       = null;   // 显示 "X / 100" 的数字节点
+    let totalStateEl  = null;   // 总分状态徽章容器（外层带 --ok / --err 样式）
+    let totalMsgEl    = null;   // 错误 / 提示文字
+    let validateBtn   = null;   // "校验总分" 按钮
+    let totalHintEl   = null;   // "共 N 个测试点" 文本
     renderCasesSection();
+
+    /**
+     * 刷新总分显示 + 同步保存按钮可用性 + 错误文案。
+     * 不重渲染整个表格，避免 input 失焦；只更新底部 summary 区域。
+     * validateTotal() 来自 utils/problem-cases.js（pure function，可单测）。
+     */
+    function updateTotalDisplay() {
+        const r = validateTotal(state.cases);
+
+        // 总分数字
+        if (totalEl)      totalEl.textContent = String(r.total);
+        if (totalHintEl)  totalHintEl.textContent = '共 ' + state.cases.length + ' 个测试点';
+
+        // 颜色：ok → 绿，err → 红
+        if (totalStateEl) {
+            totalStateEl.classList.toggle('ape-cases-summary__total--ok',  r.ok);
+            totalStateEl.classList.toggle('ape-cases-summary__total--err', !r.ok);
+        }
+        // 错误文案
+        if (totalMsgEl) {
+            if (r.ok) {
+                totalMsgEl.textContent = '总分已就绪，可以保存';
+                totalMsgEl.classList.remove('ape-cases-summary__msg--err');
+                totalMsgEl.classList.add('ape-cases-summary__msg--ok');
+            } else {
+                totalMsgEl.textContent = '⚠ ' + r.msg;
+                totalMsgEl.classList.remove('ape-cases-summary__msg--ok');
+                totalMsgEl.classList.add('ape-cases-summary__msg--err');
+            }
+        }
+
+        // 同步 [保存草稿] / [发布] 按钮（AC-6：总分 ≠ 100 时禁用）
+        const disabled = !r.ok;
+        saveDraftBtn.disabled = disabled;
+        publishBtn.disabled   = disabled;
+        if (saveDraftBtn) saveDraftBtn.title = disabled ? '总分之和必须为 100 后才能保存' : '';
+        if (publishBtn)   publishBtn.title   = disabled ? '总分之和必须为 100 后才能发布' : '';
+
+        // 校验按钮自身的可用性：仅在有错误时可点（"校验"在 ok 状态下是 no-op）
+        if (validateBtn) {
+            validateBtn.disabled = r.ok;
+            validateBtn.classList.toggle('is-ok', r.ok);
+        }
+
+        return r;
+    }
 
     function renderCasesSection() {
         casesSection.replaceChildren();
@@ -441,15 +496,64 @@ export default async function adminProblemEditView(params /*, query */) {
         tbl.appendChild(tbody);
         casesSection.appendChild(tbl);
 
-        const actions = createEl('div', { class: 'ape-cases-actions' });
-        actions.appendChild(createEl('button', {
+        // ---- 底部 summary：测试点数量 + 总分 + 校验按钮 + 错误/提示 ----
+        const summary = createEl('div', { class: 'ape-cases-summary' });
+
+        totalHintEl  = createEl('span', { class: 'muted ape-cases-hint' });
+        totalStateEl = createEl('span', { class: 'ape-cases-summary__total' });
+        totalStateEl.appendChild(createEl('span', { class: 'muted' }, '总分：'));
+        totalEl      = createEl('strong', { class: 'ape-cases-summary__num' }, '0');
+        totalStateEl.appendChild(totalEl);
+        totalStateEl.appendChild(createEl('span', { class: 'muted' }, ' / 100'));
+
+        totalMsgEl = createEl('span', { class: 'ape-cases-summary__msg' });
+
+        validateBtn = createEl('button', {
+            class: 'btn btn--sm btn--secondary ape-cases-validate',
+            type: 'button',
+            title: '点击检查所有测试点分值之和是否等于 100',
+            onClick: () => {
+                const r = validateTotal(state.cases);
+                if (r.ok) {
+                    toast('总分校验通过：' + r.total + ' / 100', 'success');
+                } else {
+                    toast(r.msg, 'error');
+                    if (r.firstBad && r.firstBad.index != null) {
+                        // 简单视觉聚焦：找到对应行加上高亮类
+                        const row = casesSection.querySelector(
+                            'tbody tr:nth-child(' + (r.firstBad.index + 1) + ')');
+                        if (row) {
+                            row.classList.add('ape-case-row--bad');
+                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            setTimeout(() => row.classList.remove('ape-case-row--bad'), 1500);
+                        }
+                    }
+                }
+            },
+        }, '校验总分');
+
+        const summaryLeft  = createEl('div', { class: 'ape-cases-summary__left'  },
+            [ totalHintEl, totalStateEl ]);
+        const summaryRight = createEl('div', { class: 'ape-cases-summary__right' },
+            [ totalMsgEl, validateBtn ]);
+
+        summary.appendChild(summaryLeft);
+        summary.appendChild(summaryRight);
+        casesSection.appendChild(summary);
+
+        // ---- 添加按钮 + 错误描述放在 summary 之外的最末 ----
+        const addRow = createEl('div', { class: 'ape-cases-actions' });
+        addRow.appendChild(createEl('button', {
             class: 'btn btn--sm btn--secondary',
             type: 'button',
             onClick: addCase,
         }, '+ 添加测试点'));
-        actions.appendChild(createEl('span', { class: 'muted ape-cases-hint' },
-            '共 ' + state.cases.length + ' 个测试点'));
-        casesSection.appendChild(actions);
+        addRow.appendChild(createEl('span', { class: 'muted ape-cases-hint' },
+            '提示：至少 1 个、最多 ' + kCaseMax + ' 个；所有分值之和必须等于 100'));
+        casesSection.appendChild(addRow);
+
+        // 触发一次刷新
+        updateTotalDisplay();
     }
 
     function renderCaseRow(i) {
@@ -503,9 +607,16 @@ export default async function adminProblemEditView(params /*, query */) {
         });
         scoreInput.value = String(c.score);
         scoreInput.addEventListener('input', () => {
-            const v = parseInt(scoreInput.value, 10);
-            c.score = Number.isFinite(v) && v >= 0 ? v : 0;
+            // 允许空字符串、负数、>100 暂时通过；统一在 updateTotalDisplay 时给出红色提示
+            const raw = scoreInput.value;
+            if (raw === '' || raw === '-') {
+                c.score = 0;
+            } else {
+                const v = parseInt(raw, 10);
+                c.score = Number.isFinite(v) ? v : 0;
+            }
             markDirty();
+            updateTotalDisplay();
         });
         scoreTd.appendChild(scoreInput);
         tr.appendChild(scoreTd);
@@ -619,12 +730,9 @@ export default async function adminProblemEditView(params /*, query */) {
         if (!currentMd().trim())  return { ok: false, msg: '题面不能为空' };
         if (state.tag_ids.size === 0) return { ok: false, msg: '请至少选择一个标签' };
         if (state.cases.length === 0) return { ok: false, msg: '请至少添加一个测试点' };
-        for (let i = 0; i < state.cases.length; ++i) {
-            const c = state.cases[i];
-            if (!Number.isFinite(c.score) || c.score < 0) {
-                return { ok: false, msg: `测试点 #${i + 1} 的分值无效` };
-            }
-        }
+        // 测试点总分（与 updateTotalDisplay 共享逻辑；这里做兜底，避免误开 console 调 submit）
+        const tv = validateTotal(state.cases);
+        if (!tv.ok) return { ok: false, msg: tv.msg };
         return { ok: true };
     }
 
