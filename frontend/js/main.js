@@ -20,6 +20,8 @@ import { renderHeader } from './components/header.js';
 import homeView     from './views/home.js';
 import loginView    from './views/login.js';
 import registerView from './views/register.js';
+import problemListView   from './views/problem-list.js';
+import problemDetailView from './views/problem-detail.js';
 import notFoundView from './views/not-found.js';
 import { stubView } from './views/_stub.js';
 
@@ -33,8 +35,8 @@ const ROUTES = [
     { path: '/',                          view: homeView,                          title: 'OnlineJudge' },
     { path: '/login',                     view: loginView,                         title: '登录 · OnlineJudge' },
     { path: '/register',                  view: registerView,                      title: '注册 · OnlineJudge' },
-    { path: '/problems',                  view: stubView('题目列表', 3),           title: '题库 · OnlineJudge' },
-    { path: '/problems/:id',              view: stubView('题目详情', 3),           title: '题目详情 · OnlineJudge' },
+    { path: '/problems',                  view: problemListView,                   title: '题库 · OnlineJudge' },
+    { path: '/problems/:id',              view: problemDetailView,                 title: '题目详情 · OnlineJudge' },
     { path: '/submissions',               view: stubView('我的提交', 6),           title: '我的提交 · OnlineJudge' },
     { path: '/submissions/:id',           view: stubView('提交详情', 6),           title: '提交详情 · OnlineJudge' },
     { path: '/admin/problems',            view: stubView('后台 · 题目管理', 5),     title: '后台 · OnlineJudge' },
@@ -62,7 +64,7 @@ function renderFooter() {
                 String(new Date().getFullYear()),
                 ' OnlineJudge · 仿 LeetCode 风格的在线评测系统',
             ]),
-            createEl('div', { class: 'app-footer__meta' }, 'Phase 2 · 账户系统'),
+            createEl('div', { class: 'app-footer__meta' }, 'Phase 3 · 题目浏览'),
         ])
     );
 }
@@ -86,9 +88,14 @@ const router = createRouter({
     mount: '#view-root',
     notFound: notFoundView,
     onChange: ({ path, route }) => {
-        // 高亮当前 nav
+        // 高亮当前 nav —— 对 "/problems" 这类顶层 nav，detail 子页也应高亮
         for (const a of Array.from(document.querySelectorAll('a[data-nav]'))) {
-            a.classList.toggle('is-active', a.dataset.nav === route.path);
+            const navPath = a.dataset.nav;
+            const active = navPath === route.path
+                || (navPath === '/problems'   && path.startsWith('/problems'))
+                || (navPath === '/submissions' && path.startsWith('/submissions'))
+                || (navPath === '/admin/problems' && path.startsWith('/admin/problems'));
+            a.classList.toggle('is-active', active);
         }
         // 浏览器标题
         document.title = (route && route.title) || 'OnlineJudge';
