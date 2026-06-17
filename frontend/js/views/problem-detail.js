@@ -28,32 +28,23 @@ import { authStore } from '../store/state.js';
 import { navigate } from '../router.js';
 import { toast } from '../components/toast.js';
 import { formatTime, formatMemory } from '../utils/format.js';
+import { makeDraftStore } from '../utils/draft.js';
 
 const DRAFT_PREFIX = 'draft:problem_';
 const DEBOUNCE_MS  = 500;
 
 const DEFAULT_LANG = 'cpp';
 
-function draftKey(problemId, lang) {
-    return `${DRAFT_PREFIX}${problemId}:${lang}`;
-}
-
-function loadDraft(problemId, lang) {
-    try { return localStorage.getItem(draftKey(problemId, lang)) || ''; }
-    catch { return ''; }
-}
-
-function saveDraft(problemId, lang, code) {
-    try {
-        if (code && code.length) {
-            localStorage.setItem(draftKey(problemId, lang), code);
-        } else {
-            localStorage.removeItem(draftKey(problemId, lang));
-        }
-    } catch { /* quota or private mode */ }
-}
+// 全局草稿存储（注入 localStorage；测试时可替换为 mock）
+const draft = makeDraftStore(typeof window !== 'undefined' ? window.localStorage : null);
 
 export default async function problemDetailView(params /*, query */) {
+    // 进入新一次 detail 视图：先把上一份 pending 的草稿刷掉（路由切换场景）
+    if (_scheduler) {
+        try { _scheduler.flush(); } catch {}
+        _scheduler = null;
+    }
+
     const problemId = parseInt(params.id, 10);
     if (!Number.isFinite(problemId) || problemId <= 0) {
         return renderNotFound();
@@ -115,6 +106,22 @@ export default async function problemDetailView(params /*, query */) {
         problem,
     };
     renderRight(rightCol, editorState);
+
+    // 离开页面（关闭 tab / 刷新 / 跳路由）时把待写的草稿立即 flush，
+    // 避免 debounce 窗口里的最新改动丢失。
+    const onBeforeUnload = () => {
+        if (_scheduler) _scheduler.flush();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    // 视图卸载时清掉监听（router 替换 view-root 节点时）
+    root._cleanup = () => {
+        window.removeEventListener('beforeunload', onBeforeUnload);
+        if (_scheduler) _scheduler.flush();
+        _scheduler = null;
+        if (editorState.editor && editorState.editor.dispose) {
+            try { editorState.editor.dispose(); } catch {}
+        }
+    };
 
     return root;
 }
@@ -227,10 +234,11 @@ function renderRight(container, st) {
     sel.addEventListener('change', () => {
         // 切语言：保存当前 → 加载新
         const cur = currentCode(st);
-        saveDraft(st.problemId, st.lang, cur);
+        draft.save(st.problemId, st.lang, cur);
         st.lang = sel.value;
-        const next = loadDraft(st.problemId, st.lang) || (LANG_BY_ID[st.lang] || {}).defaultCode || '';
+        const next = draft.load(st.problemId, st.lang) || (LANG_BY_ID[st.lang] || {}).defaultCode || '';
         mountEditor(editorHost, st, next);
+        updateDraftBanner(st, banner);
     });
     head.appendChild(sel);
     container.appendChild(head);
@@ -240,8 +248,13 @@ function renderRight(container, st) {
     container.appendChild(editorHost);
 
     // 初始代码：draft > 默认模板
-    const initial = loadDraft(st.problemId, st.lang) || (LANG_BY_ID[st.lang] || {}).defaultCode || '';
+    const initial = draft.load(st.problemId, st.lang) || (LANG_BY_ID[st.lang] || {}).defaultCode || '';
     mountEditor(editorHost, st, initial);
+
+    // 草稿恢复提示条
+    const banner = createEl('div', { class: 'pd-draft-banner' });
+    container.appendChild(banner);
+    updateDraftBanner(st, banner);
 
     // 底部按钮
     const actions = createEl('div', { class: 'pd-actions' });
@@ -252,8 +265,10 @@ function renderRight(container, st) {
             if (!confirm('确定要重置当前语言的代码为默认模板？\n（不会影响其他语言）')) return;
             const L = LANG_BY_ID[st.lang] || {};
             const def = L.defaultCode || '';
-            saveDraft(st.problemId, st.lang, '');
+            draft.clear(st.problemId, st.lang);
             setEditorValue(st, def);
+            scheduler.cancel();
+            updateDraftBanner(st, banner);
         },
     }, '重置');
     const submitBtn = createEl('button', {
@@ -287,13 +302,19 @@ function setEditorValue(st, value) {
     }
 }
 
-let _draftTimer = null;
+let _scheduler = null;
+function ensureScheduler(st) {
+    if (_scheduler) return _scheduler;
+    _scheduler = draft.makeScheduler(
+        () => currentCode(st),
+        (pid, lang, code) => draft.save(pid, lang, code),
+        DEBOUNCE_MS,
+    );
+    return _scheduler;
+}
+
 function scheduleSaveDraft(st) {
-    if (_draftTimer) clearTimeout(_draftTimer);
-    _draftTimer = setTimeout(() => {
-        const v = currentCode(st);
-        saveDraft(st.problemId, st.lang, v);
-    }, DEBOUNCE_MS);
+    ensureScheduler(st).schedule(st.problemId, st.lang);
 }
 
 async function mountEditor(host, st, initialValue) {
@@ -317,6 +338,45 @@ async function mountEditor(host, st, initialValue) {
             st.statusEl.textContent = '⚠ 高级编辑器加载失败，已切换到简单模式';
         }
     }
+}
+
+// =============================================================================
+//  草稿恢复提示 —— 当用户进入时发现 localStorage 有草稿，提示一下
+// =============================================================================
+function updateDraftBanner(st, host) {
+    if (!host) return;
+    const code = draft.load(st.problemId, st.lang);
+    if (!code) {
+        host.replaceChildren();
+        host.classList.remove('is-active');
+        return;
+    }
+    const bytes = new Blob([code]).size;
+    const langLabel = (LANGS.find(L => L.id === st.lang) || {}).label || st.lang;
+    host.classList.add('is-active');
+    host.replaceChildren(
+        createEl('span', { class: 'pd-draft-banner__icon' }, '💾'),
+        createEl('span', { class: 'pd-draft-banner__text' },
+            `已从草稿恢复 [${langLabel}] (${formatBytes(bytes)})`),
+        createEl('button', {
+            class: 'btn btn--sm btn--ghost pd-draft-banner__clear',
+            type: 'button',
+            title: '清空当前语言草稿（其他语言不受影响）',
+            onClick: () => {
+                draft.clear(st.problemId, st.lang);
+                const L = LANG_BY_ID[st.lang] || {};
+                setEditorValue(st, L.defaultCode || '');
+                updateDraftBanner(st, host);
+                toast('已清空草稿', 'info');
+            },
+        }, '清空'),
+    );
+}
+
+function formatBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
 }
 
 // =============================================================================
@@ -348,7 +408,8 @@ async function onSubmit(st, btn) {
             code,
         });
         // 清掉 draft
-        saveDraft(st.problemId, st.lang, '');
+        draft.clear(st.problemId, st.lang);
+        if (_scheduler) _scheduler.cancel();
         toast('已提交，判题中…', 'success');
         navigate('/submissions/' + (data && data.submission_id));
     } catch (err) {

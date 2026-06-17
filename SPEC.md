@@ -1246,8 +1246,8 @@ open http://localhost
 - [x] `GET /api/problems`（分页、过滤、排序）
 - [x] `GET /api/problems/{id}`（含样例点）
 - [x] `GET /api/tags`
-- [ ] 前端：题目列表页 + 题目详情页（Markdown 渲染 + Monaco 编辑器）
-- [ ] localStorage 草稿自动保存
+- [x] 前端：题目列表页 + 题目详情页（Markdown 渲染 + Monaco 编辑器）
+- [x] localStorage 草稿自动保存
 
 ### Phases 4 - 判题子系统
 - [ ] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控

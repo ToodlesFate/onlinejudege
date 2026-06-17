@@ -426,3 +426,34 @@
     text-align: right;
     color: var(--warn);
 }
+
+/* =============================================================================
+ *  Draft Banner —— 草稿恢复提示 (SPEC §3.3.5 H)
+ *  当进入页面时 localStorage 已有当前语言的草稿，显示一条简短提示 + 清空按钮
+ * ============================================================================= */
+.pd-draft-banner {
+    display: none;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: var(--r-md);
+    color: var(--fg-0);
+    font-size: var(--fs-xs);
+}
+.pd-draft-banner.is-active {
+    display: flex;
+}
+.pd-draft-banner__icon {
+    font-size: 14px;
+}
+.pd-draft-banner__text {
+    flex: 1 1 auto;
+    color: var(--accent);
+}
+.pd-draft-banner__clear {
+    height: 24px;
+    padding: 0 var(--sp-2);
+    color: var(--accent);
+}
