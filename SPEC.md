@@ -1253,8 +1253,8 @@ open http://localhost
 - [x] `judge` 工具（C++）：编译 + 逐点运行 + 资源监控
 - [x] 5 个 judge 镜像 Dockerfile + entrypoint.sh
 - [x] DockerClient（C++，libcurl 调用 Engine API）
-- [ ] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
-- [ ] submission / submission_cases 表
+- [x] JudgeDispatcher 线程池（4 worker）+ MySQL 任务轮询
+- [x] submission / submission_cases 表
 - [ ] `POST /api/submissions` + `GET /api/submissions/{id}`
 - [ ] 前端：提交后 2s 轮询 + 状态机可视化
 

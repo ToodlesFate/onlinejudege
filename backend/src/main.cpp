@@ -28,26 +28,34 @@
 #include "common/error_code.hpp"
 #include "common/version.hpp"
 #include "domain/auth_service.hpp"
+#include "domain/judge_dispatcher.hpp"
 #include "domain/problem_repository.hpp"
 #include "domain/problem_service.hpp"
 #include "http/HttpServer.hpp"
 #include "http/handlers/auth_handler.hpp"
 #include "http/handlers/health_handler.hpp"
 #include "http/handlers/problem_handler.hpp"
+#include "infra/docker_client.hpp"
+#include "infra/docker_judge_adapter.hpp"
 #include "infra/jwt_service.hpp"
 #include "infra/mysql_client.hpp"
 #include "infra/password_hasher.hpp"
 #include "infra/problem_repo.hpp"
+#include "infra/submission_repo.hpp"
 #include "infra/tag_repo.hpp"
 #include "infra/testcase_repo.hpp"
 #include "infra/user_repo.hpp"
 
 namespace {
 
-std::atomic<oj::http::HttpServer*> g_server{nullptr};
+std::atomic<oj::http::HttpServer*>   g_server{nullptr};
+std::atomic<oj::domain::JudgeDispatcher*> g_dispatcher{nullptr};
 
 void on_signal(int sig) {
     spdlog::warn("received signal {}, shutting down", sig);
+    if (auto* d = g_dispatcher.load(); d != nullptr) {
+        d->stop();
+    }
     if (auto* s = g_server.load(); s != nullptr) {
         s->stop();
     }
@@ -230,6 +238,25 @@ int main(int argc, char** argv) {
     auto tags_repo         = std::make_shared<infra::MysqlTagRepo>(mysql);
     auto problem_service  = std::make_shared<domain::ProblemService>(
         problems_repo, testcases_repo, tags_repo);
+
+    // -------------------------------------------------------------------
+    //  Judge 子系统 —— SubmissionRepo + DockerClient + JudgeDispatcher
+    //   注意：cfg 在下方会被 move 进 HttpServer；这里先把 cfg.judge 拷贝一份
+    //   出来，避免 use-after-move。
+    // -------------------------------------------------------------------
+    std::shared_ptr<oj::domain::JudgeDispatcher> dispatcher;
+    if (mysql->is_ready()) {
+        auto submissions_repo = std::make_shared<infra::MysqlSubmissionRepo>(mysql);
+        auto docker_client    = std::make_shared<infra::DockerClient>(cfg.judge.docker);
+        docker_client->set_work_root(cfg.judge.work_root);
+        auto docker_adapter   = std::make_shared<infra::DockerJudgeAdapter>(docker_client);
+        dispatcher = std::make_shared<oj::domain::JudgeDispatcher>(
+            cfg.judge, submissions_repo, docker_adapter);
+        dispatcher->start();
+        g_dispatcher.store(dispatcher.get(), std::memory_order_release);
+    } else {
+        spdlog::warn("MySQL not ready; JudgeDispatcher not started (submissions will queue but never be picked up)");
+    }
 
     // -------------------------------------------------------------------
     //  Http 层
