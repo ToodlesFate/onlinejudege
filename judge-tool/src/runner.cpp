@@ -161,8 +161,11 @@ CaseResult run_case(Language lang,
         ::dup2(err_fd, STDERR_FILENO);
         ::close(in_fd); ::close(out_fd); ::close(err_fd);
 
-        // 编译型语言在子进程内设 RLIMIT_AS
-        if (lang == Language::C || lang == Language::Cpp || lang == Language::Go) {
+        // 编译型语言在子进程内设 RLIMIT_AS。
+        // 注意：Go 运行时启动时需要大块虚拟地址空间（pageAlloc），
+        //       即便 mem_mb=64 也会失败。所以 Go 不强制 RLIMIT_AS，
+        //       改由容器 --memory= 限制 RSS。
+        if (lang == Language::C || lang == Language::Cpp) {
             apply_rlimits_compiled(limits.mem_mb);
         }
 

@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ----------------------------------------------------------------------------
+#  静态构建选项 —— 用于 judge 镜像内嵌（SPEC §6.1 要求 5MB）
+#  打开方式：cmake -DJUDGE_STATIC=ON ..
+# ----------------------------------------------------------------------------
+option(JUDGE_STATIC "Build judge with static linkage (no libstdc++/libgcc needed)" OFF)
+
 # 关闭所有子项目的 install / 测试 / 例子
 set(FETCHCONTENT_QUIET OFF)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -13,16 +19,23 @@ include(FetchContent)
 
 # ----------------------------------------------------------------------------
 #  nlohmann/json —— header-only
+#  默认通过 FetchContent 拉；可在容器构建时设 JUDGE_NO_FETCHCONTENT=ON
+#  改用系统安装的 libnlohmann-json3-dev（避免容器内 git fetch 超时）
 # ----------------------------------------------------------------------------
-FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
-    GIT_SHALLOW    TRUE
-)
-set(JSON_BuildTests OFF CACHE INTERNAL "")
-set(JSON_Install    OFF CACHE INTERNAL "")
-FetchContent_MakeAvailable(nlohmann_json)
+option(JUDGE_NO_FETCHCONTENT "Use system-installed nlohmann/json (skip FetchContent)" OFF)
+if(JUDGE_NO_FETCHCONTENT)
+    find_package(nlohmann_json 3.10 REQUIRED)
+else()
+    FetchContent_Declare(
+        nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG        v3.11.3
+        GIT_SHALLOW    TRUE
+    )
+    set(JSON_BuildTests OFF CACHE INTERNAL "")
+    set(JSON_Install    OFF CACHE INTERNAL "")
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 # ----------------------------------------------------------------------------
 #  googletest —— 仅 tests target 用
@@ -66,6 +79,11 @@ endif()
 # ----------------------------------------------------------------------------
 add_executable(judge src/main.cpp)
 target_link_libraries(judge PRIVATE judge_core)
+if(JUDGE_STATIC)
+    target_link_options(judge PRIVATE -static-libstdc++ -static-libgcc)
+    target_compile_options(judge PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(judge PRIVATE -Wl,--gc-sections -Wl,-s)
+endif()
 
 # ----------------------------------------------------------------------------
 #  tests

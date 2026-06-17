@@ -1,0 +1,13 @@
+# judge-images/.dockerignore —— 排除不必要的文件
+# 注意：build/judge 是 build.sh 阶段产生的，必须保留
+.git
+.gitignore
+*.md
+**/*.swp
+build/CMakeCache.txt
+build/CMakeFiles
+build/cmake_install.cmake
+build/Makefile
+build/build.ninja
+build/.ninja_log
+build/.ninja_deps
