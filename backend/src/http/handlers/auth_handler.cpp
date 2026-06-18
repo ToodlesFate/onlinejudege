@@ -10,6 +10,7 @@
 
 #include "common/error_code.hpp"
 #include "http/HttpServer.hpp"  // HttpServer 完整定义（register_auth_routes 用到）
+#include "http/middleware/middleware.hpp"
 
 namespace oj::http::handlers {
 
@@ -128,30 +129,18 @@ void handle_register(const std::shared_ptr<oj::domain::AuthService>& auth,
                      const std::function<bool()>& is_db_ready,
                      const httplib::Request& req, httplib::Response& res) {
     using oj::common::ErrorCode;
+    namespace mw = oj::http::middleware;
 
     // 0) DB 可用性检查 —— MySQL 不可达时返回 503（SPEC §2.6 可用性）
     if (is_db_ready && !is_db_ready()) {
-        write_error(res, ErrorCode::SystemError, "database not available");
+        mw::db_unavailable_response(res);
         return;
     }
 
-    // 1) 解析 body
-    nlohmann::json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = nlohmann::json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
 
     // 2) 提取字段
     auto get_string = [&](const char* key) -> std::string {
@@ -206,30 +195,18 @@ void handle_login(const std::shared_ptr<oj::domain::AuthService>& auth,
                   const std::function<bool()>& is_db_ready,
                   const httplib::Request& req, httplib::Response& res) {
     using oj::common::ErrorCode;
+    namespace mw = oj::http::middleware;
 
     // 0) DB 可用性检查 —— MySQL 不可达时返回 503（SPEC §2.6 可用性）
     if (is_db_ready && !is_db_ready()) {
-        write_error(res, ErrorCode::SystemError, "database not available");
+        mw::db_unavailable_response(res);
         return;
     }
 
-    // 1) 解析 body
-    nlohmann::json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = nlohmann::json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
 
     // 2) 提取字段
     auto get_string = [&](const char* key) -> std::string {
@@ -285,10 +262,11 @@ void handle_refresh(const std::shared_ptr<oj::domain::AuthService>& auth,
                     const std::function<bool()>& is_db_ready,
                     const httplib::Request& req, httplib::Response& res) {
     using oj::common::ErrorCode;
+    namespace mw = oj::http::middleware;
 
     // 0) DB 可用性检查 —— MySQL 不可达时返回 503（SPEC §2.6 可用性）
     if (is_db_ready && !is_db_ready()) {
-        write_error(res, ErrorCode::SystemError, "database not available");
+        mw::db_unavailable_response(res);
         return;
     }
 

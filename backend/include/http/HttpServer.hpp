@@ -68,8 +68,37 @@ public:
     // 安装全局异常中间件：handler 抛异常时统一返回 500 envelope
     void install_exception_middleware();
 
+    // 注入 access log hook —— SPEC §2.6 / §9.3
+    // 用法:
+    //     server.install_logger([](const Request&, const Response&){ ... });
+    // httplib::Logger = std::function<void(const Request&, const Response&)>
+    using AccessLogHook = std::function<void(const httplib::Request&, const httplib::Response&)>;
+    void install_logger(AccessLogHook hook);
+
+    // 注入 pre-routing hook —— 在路由匹配前执行,可用于记 request 开始时间、
+    // 鉴权、CORS 等。返回 Handled 会让 httplib 直接用 res.body 返回,跳过路由;
+    // 返回 Unhandled / passthrough 表示交给后续路由匹配。
+    using PreRoutingHook = std::function<httplib::Server::HandlerResponse(
+        const httplib::Request&, httplib::Response&)>;
+    void install_pre_routing(PreRoutingHook hook);
+
+    // 注入 post-routing hook —— handler 跑完后、写入 socket 前执行。
+    // 用途: 加安全响应头 / 统一埋点 / 灰度。
+    using PostRoutingHook = std::function<void(const httplib::Request&, httplib::Response&)>;
+    void install_post_routing(PostRoutingHook hook);
+
     // 阻塞监听；启动失败返回 false 并把错误写入 reason
     bool listen(std::string* reason = nullptr);
+
+    // 非阻塞启动 (单测用): 与 listen() 等价的"绑端口 + 后台线程跑 accept 循环",
+    // 立刻返回,失败时返回 false 并把原因写入 *reason。
+    // 配合 stop() 在测试结束时清理。
+    bool start_async(std::string* reason = nullptr);
+
+    // 实际绑定的端口(用于单测 port=0 的场景)
+    // listen 之前调用返回 config_.server.port;
+    // listen 成功之后返回 OS 实际分配的端口。
+    [[nodiscard]] int bound_port() const noexcept;
 
     // 停止监听（线程安全，可在 signal handler 中调用）
     void stop();
@@ -83,6 +112,9 @@ private:
     common::AppConfig              config_;
     std::unique_ptr<httplib::Server> server_;
     std::chrono::steady_clock::time_point started_at_;
+    int bound_port_{0};
+    std::thread listen_thread_{};
+    bool async_mode_{false};
 };
 
 }  // namespace oj::http

@@ -21,6 +21,7 @@
 #include "domain/problem_types.hpp"
 #include "http/HttpServer.hpp"
 #include "http/handlers/submission_handler.hpp"  // parse_bearer_auth + AuthContext
+#include "http/middleware/middleware.hpp"
 #include "infra/jwt_service.hpp"
 
 namespace oj::http::handlers {
@@ -28,6 +29,7 @@ namespace oj::http::handlers {
 namespace {
 
 using nlohmann::json;
+namespace mw = oj::http::middleware;
 using oj::common::ErrorCode;
 using oj::domain::AdminProblemError;
 using oj::domain::AdminProblemErrorKind;
@@ -429,23 +431,10 @@ void handle_create(const std::shared_ptr<oj::domain::IProblemService>& service,
     std::int64_t user_id = 0;
     if (!require_admin(req, jwt, user_id, res)) return;
 
-    // 1) 解析 body
-    json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
 
     // 2) body → ProblemWriteInput
     ProblemWriteInput in;
@@ -496,23 +485,10 @@ void handle_update(const std::shared_ptr<oj::domain::IProblemService>& service,
     }
     const std::int64_t id = *id_opt;
 
-    // 1) 解析 body
-    json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
 
     // 2) body → ProblemWriteInput
     ProblemWriteInput in;
@@ -610,23 +586,10 @@ void handle_publish(const std::shared_ptr<oj::domain::IProblemService>& service,
     }
     const std::int64_t id = *id_opt;
 
-    // 1) 解析 body
-    json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
     bool want_published = false;
     {
         auto it = body.find("is_published");

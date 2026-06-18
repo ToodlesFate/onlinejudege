@@ -247,4 +247,40 @@ TEST(SubmissionStateMachineTest, ResultStringsMatchFrontendContract) {
     }
 }
 
+// SPEC §9.1.3 AC-8/9/10/11/12: 8 种终态在状态机里合法出现;
+// 防御性:to_string 任意 enum 都必须落在一个非空字符串上,不允许空串或 nullopt。
+TEST(SubmissionStateMachineTest, ToStringNeverEmpty) {
+    for (auto s : kAllStatus) {
+        const std::string_view sv = oj::domain::to_string(s);
+        EXPECT_FALSE(sv.empty());
+    }
+    for (auto r : kAllResults) {
+        const std::string_view sv = oj::domain::to_string(r);
+        EXPECT_FALSE(sv.empty());
+    }
+}
+
+// SPEC §2.3.2 状态机: queued -> compiling -> running -> finished;
+// queued / compiling / running 都不是终态,只能 finished 配 8 态 result。
+// 此处校验:"任意非 Finished 状态 is_terminal 必须为 false",
+// 防止新加状态时漏掉 is_terminal_status 维护。
+TEST(IsTerminalStatusTest, OnlyExactlyOneStatusIsTerminal) {
+    int terminal_count = 0;
+    for (auto s : kAllStatus) {
+        if (oj::domain::is_terminal_status(s)) terminal_count++;
+    }
+    EXPECT_EQ(terminal_count, 1)
+        << "提交状态 4 态中应只有 finished 一个终态";
+}
+
+// SPEC §2.3.2 状态机:8 种 result 全部是终态。
+TEST(IsTerminalResultTest, ExactlyEightResultsAreTerminal) {
+    int terminal_count = 0;
+    for (auto r : kAllResults) {
+        if (oj::domain::is_terminal(r)) terminal_count++;
+    }
+    EXPECT_EQ(terminal_count, 8)
+        << "8 种结果全部是终态,不应新增或遗漏";
+}
+
 }  // namespace

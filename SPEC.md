@@ -1266,10 +1266,10 @@ open http://localhost
 
 ### Phases 6 - 提交历史 + 详情
 - [x] 提交列表（个人 / 公共） (详见 §9.9 / `docs/phase6-1-verification.md`)
-- [ ] 提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff
+- [x] 提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff (详见 §9.10 / `docs/phase6-2-verification.md`)
 
 ### Phases 7 - 打磨与验收
-- [ ] spdlog 接入 + access log
+- [x] spdlog 接入 + access log
 - [ ] 统一错误中间件
 - [ ] 单元测试（GoogleTest）：Auth / Problem / Judge 关键路径
 - [ ] README：本地开发 + 部署文档
@@ -1542,6 +1542,52 @@ open http://localhost
 
 **结论**：Phase 6 第 1 项「提交列表（个人 / 公共）」通过验收，
 进入下一项「提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff」。
+
+---
+
+### 9.10 Phase 6 — 提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff（已通过）
+> 触发条件：SPEC §8 TODO「Phases 6 - 提交历史 + 详情」第 2 项已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与单元测试矩阵见
+> [`docs/phase6-2-verification.md`](docs/phase6-2-verification.md)。
+
+**验证时间**：2026-06-17
+**验证环境**：Node 24 / Debian 12 (bookworm)
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 6-2a | **Monaco 只读**（失败降级 textarea） | `createEditorOrFallback({ readOnly: true })` | ✅ |
+| 6-2b | **逐点状态表格**：# / 状态 / 耗时 / 内存 / 分数 / 类型（样例/隐藏）/ 详情 | `renderCases` + `.sd-cases` | ✅ |
+| 6-2c | **错点"查看" → diff 弹窗** | `openCaseDialog` + `buildModalColumns` | ✅ |
+| 6-2d | 样例点：3 列 (input / expected / user_output) | `buildModalColumns(kind='sample')` | ✅ |
+| 6-2e | 隐藏点：占位 "为保护题目，不展示隐藏点详情" | `buildModalColumns(kind='hidden')` | ✅ |
+| 6-2f | **WA 时 LCS 行级 diff 高亮**（user_output 列：same=灰 / added=红） | `computeLineDiff` + `.sd-diff-line--same/--added` | ✅ |
+| 6-2g | diff 摘要：行级 diff 共 N 行 匹配 M 行 | `.sd-diff-summary` | ✅ |
+| 6-2h | **AC-19**：错点展示 user_output（仅 is_sample=1）/ expected / diff | 3 项 AC-19 单测全过 | ✅ |
+| 6-2i | **CE 终态**：源代码区下方展示 compile_output | `renderStatusMachineCard` CE 分支 | ✅ |
+| 6-2j | **SE 终态**：展示 judge_message | `renderStatusMachineCard` SE 分支 | ✅ |
+| 6-2k | **公开访问**：仅 AC 对匿名 / 其他用户可见 | E2E: 匿名 / Bob 访问 alice's AC → 200；WA → 403 | ✅ |
+| 6-2l | 403 / 404 兜底：toast + 回上一页 / 列表 | `renderLoadError` / `renderNotFound` | ✅ |
+| 6-2m | 2s 轮询（30min 超时，finished 立即停） | `createPoller` + 22 项 poller 单测 | ✅ |
+| 6-2n | 离开页面清理 poller + Monaco | `root._cleanup` | ✅ |
+| 6-2o | **Bug 修复**：表格 score 列从 "X / 100" 改为 "X" | `formatCaseScore` + 4 项单测 | ✅ |
+| 6-2p | 9 个纯函数 / LCS diff 抽到 helpers.js | `submission-detail-helpers.js` | ✅ |
+| 6-2q | 50 项前端纯逻辑测试全过 | `submission-detail-helpers.test.mjs` 50/50 | ✅ |
+| 6-2r | 全部 196 项前端测试稳定通过 | 8 个测试文件全过 | ✅ |
+| 6-2s | 全部 554 项非 MySQL 后端测试稳定通过 | `./build/oj_unit_tests` | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `frontend/js/utils/submission-detail-helpers.js` | 新增 | 9 个纯函数 + LCS 行级 diff（O(m·n)） |
+| `frontend/js/views/submission-detail.js` | 重构 | 接入 helpers；WA 时 user_output 列 LCS diff 渲染；移除冗余常量 |
+| `frontend/css/submission-page.css` | 修改 | `.sd-diff-line--same/--added/--removed` + `.sd-diff-col__pre--user` + `.sd-diff-summary` |
+| `frontend/tests/submission-detail-helpers.test.mjs` | 新增 | 50 项纯逻辑测试（含 AC-19 完整链路） |
+| `docs/phase6-2-verification.md` | 新增 | 本次验收报告 |
+
+**结论**：Phase 6 第 2 项「提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff」通过验收。
+SPEC §8「Phases 6 - 提交历史 + 详情」全部两项完成；如无新增项可进入 Phase 7「打磨与验收」。
 
 ---
 

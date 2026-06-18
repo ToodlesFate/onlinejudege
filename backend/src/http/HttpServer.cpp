@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <exception>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -21,6 +22,9 @@ HttpServer::HttpServer(common::AppConfig config)
 HttpServer::~HttpServer() {
     if (server_ && server_->is_running()) {
         server_->stop();
+    }
+    if (listen_thread_.joinable()) {
+        listen_thread_.join();
     }
 }
 
@@ -94,6 +98,29 @@ void HttpServer::install_exception_middleware() {
     });
 }
 
+void HttpServer::install_logger(AccessLogHook hook) {
+    if (!hook) return;
+    server_->set_logger(std::move(hook));
+}
+
+void HttpServer::install_pre_routing(PreRoutingHook hook) {
+    if (!hook) return;
+    server_->set_pre_routing_handler(
+        [fn = std::move(hook)](const httplib::Request& req,
+                               httplib::Response& res) -> httplib::Server::HandlerResponse {
+            return fn(req, res);
+        });
+}
+
+void HttpServer::install_post_routing(PostRoutingHook hook) {
+    if (!hook) return;
+    server_->set_post_routing_handler(
+        [fn = std::move(hook)](const httplib::Request& req,
+                               httplib::Response& res) {
+            fn(req, res);
+        });
+}
+
 bool HttpServer::listen(std::string* reason) {
     install_exception_middleware();
 
@@ -102,24 +129,68 @@ bool HttpServer::listen(std::string* reason) {
         return new httplib::ThreadPool(threads);
     };
 
+    // 绑定端口:
+    //   - 若 config_.server.port == 0,改用 bind_to_any_port() 让 OS 分配,
+    //     然后保存实际端口供 bound_port() 暴露(用于单测 port=0 的场景)
+    //   - 否则按指定端口绑定
+    if (config_.server.port == 0) {
+        bound_port_ = server_->bind_to_any_port(config_.server.host);
+        if (bound_port_ <= 0) {
+            if (reason) {
+                *reason = "httplib::Server::bind_to_any_port returned "
+                          + std::to_string(bound_port_);
+            }
+            return false;
+        }
+        if (!server_->listen_after_bind()) {
+            if (reason) {
+                *reason = "httplib::Server::listen_after_bind returned false";
+            }
+            return false;
+        }
+    } else {
+        if (!server_->listen(config_.server.host, config_.server.port)) {
+            if (reason) {
+                *reason = "httplib::Server::listen returned false";
+            }
+            return false;
+        }
+        bound_port_ = config_.server.port;
+    }
+
     spdlog::info("oj_backend {} listening on {}:{} (threads={})",
                  OJ_VERSION_STRING,
                  config_.server.host,
-                 config_.server.port,
+                 bound_port_,
                  threads);
-
-    if (!server_->listen(config_.server.host, config_.server.port)) {
-        if (reason) {
-            *reason = "httplib::Server::listen returned false";
-        }
-        return false;
-    }
     return true;
 }
 
+bool HttpServer::start_async(std::string* reason) {
+    // 与 listen() 共用绑定逻辑,但让 accept 循环跑在后台线程,
+    // 立即返回 true。失败时返回 false 并写 reason。
+    async_mode_ = true;
+    listen_thread_ = std::thread([this, reason]() {
+        // 在新线程里跑 listen();这里 listen() 会阻塞,直到 stop()
+        if (!listen(reason)) {
+            // listen 失败 → spdlog 已经写;此处不再重复
+        }
+    });
+    // 等 server 真正 ready(避免测试在 bind 完成前就发请求)
+    server_->wait_until_ready();
+    return bound_port_ > 0;
+}
+
+int HttpServer::bound_port() const noexcept {
+    return bound_port_;
+}
+
 void HttpServer::stop() {
-    if (server_) {
+    if (server_ && server_->is_running()) {
         server_->stop();
+    }
+    if (listen_thread_.joinable()) {
+        listen_thread_.join();
     }
 }
 

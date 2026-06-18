@@ -39,6 +39,7 @@
 #include "http/handlers/health_handler.hpp"
 #include "http/handlers/problem_handler.hpp"
 #include "http/handlers/submission_handler.hpp"
+#include "http/middleware/middleware.hpp"
 #include "infra/docker_client.hpp"
 #include "infra/docker_judge_adapter.hpp"
 #include "infra/jwt_service.hpp"
@@ -291,6 +292,12 @@ int main(int argc, char** argv) {
                                                [mysql]() { return mysql->is_ready(); });
 
     g_server.store(&server, std::memory_order_release);
+
+    // ---- Phase 7: 横切中间件 (access log + 安全响应头) ----------------
+    // 注意:install_exception_middleware() 已在 server.listen() 内部调用,
+    // 这里只补 access log 与安全响应头。
+    oj::http::middleware::install_access_log(server);
+    oj::http::middleware::install_security_headers(server);
 
     std::string reason;
     if (!server.listen(&reason)) {

@@ -1,14 +1,14 @@
 // =============================================================================
-//  views/submission-detail.js — 提交详情页 (SPEC §3.3.5 K)
+//  views/submission-detail.js — 提交详情页 (SPEC §2.4 / §3.3.5 K)
 //
 //  布局：
 //    Header 状态条： 提交 #ID  [STATUS]  总分 X/100
 //    元信息：      用户 / 语言 / 耗时 / 内存 / 提交时间 / 判完时间
 //    状态机可视化： 进度条 + 3 节点 (queued/compiling/running) + 终态结果
 //    Tabs：        [源代码] [测试点]
-//    源代码区：    Monaco 只读模式
-//    测试点表：    # / 状态 / 耗时 / 内存 / 分数 / 详情
-//    错点弹窗：    样例：input / expected / user_output
+//    源代码区：    Monaco 只读模式（失败降级 textarea）
+//    测试点表：    # / 状态 / 耗时 / 内存 / 分数 / 类型 / 详情
+//    错点弹窗：    样例：input / expected / user_output（WA 时 user_output 高亮 diff）
 //                 隐藏：仅显示 "为保护题目，不展示隐藏点详情"
 //
 //  行为：
@@ -16,34 +16,39 @@
 //      · status != 'finished' → 启动 2s 轮询（poller.js）
 //      · status == 'finished' → 不轮询，直接渲染
 //    - 终态 (finished)：渲染测试点表 + 结果区；CE 时显示 compile_output；SE 时显示 judge_message
-//    - 错点"查看" → 弹模态
-//    - 离开页面：停止轮询（router 替换 view-root 节点时触发）
+//    - 错点"查看" → 弹模态（错点 = WA/TLE/MLE/OLE/RE，CE/SE 无测试点故无按钮）
+//    - WA 时 user_output 列用 LCS 行级 diff 高亮（红 = 多出来 / 灰 = 一致）
+//    - 离开页面：停止轮询 + 拆掉 Monaco
 //
 //  鉴权：
 //    - 公开访问：仅当 result=AC；其他情况需登录且为本人（或 admin）
 //    - 403 / 404 → toast + 回上一页
 // =============================================================================
 
-import { createEl, loading, empty, errorBanner, statusBadge } from '../utils/dom.js';
+import { createEl, empty, errorBanner, statusBadge } from '../utils/dom.js';
 import { get as apiGet } from '../api/submissions.js';
-import { ApiError, HttpError } from '../api/client.js';
+import { ApiError } from '../api/client.js';
 import { createStatusMachine, updateStatusMachine } from '../components/status-machine.js';
 import { createPoller, POLL_INTERVAL_MS, POLL_MAX_DURATION_MS } from '../utils/poller.js';
 import { createEditorOrFallback, LANG_BY_ID } from '../components/monaco-loader.js';
-import { authStore } from '../store/state.js';
 import { navigate } from '../router.js';
 import { toast } from '../components/toast.js';
 import { formatDateTime, formatTime, formatMemory } from '../utils/format.js';
-
-// 提前退场的原因（CE/SE）—— 测试点不展示
-const EARLY_EXIT_RESULTS = new Set(['CE', 'SE']);
-
-// 错点（需要展示 diff / user_output）—— SPEC §2.4
-const FAIL_RESULTS = new Set(['WA', 'TLE', 'MLE', 'OLE', 'RE']);
+import {
+    parseSubmissionId,
+    pickStatusBadgeCode,
+    formatTotalScore,
+    formatCaseScore,
+    emptyCasesMessage,
+    buildMetaItems,
+    buildModalColumns,
+    shouldShowViewButton,
+    computeLineDiff,
+} from '../utils/submission-detail-helpers.js';
 
 export default async function submissionDetailView(params /*, query */) {
-    const id = parseInt(params.id, 10);
-    if (!Number.isFinite(id) || id <= 0) {
+    const id = parseSubmissionId(params);
+    if (id == null) {
         return renderNotFound();
     }
 
@@ -105,7 +110,6 @@ export default async function submissionDetailView(params /*, query */) {
         shouldStop: (d) => !!(d && d.status === 'finished'),
         onTick: (data) => {
             if (!root.isConnected) return;
-            // 更新头部 / 状态机 / 测试点表
             const top   = root.querySelector('.sd-top');
             const meta  = root.querySelector('.sd-meta');
             const sm    = root.querySelector('.sm');
@@ -115,14 +119,13 @@ export default async function submissionDetailView(params /*, query */) {
             if (sm)   updateStatusMachine(sm, data);
             if (body) body.replaceWith(renderCases(data));
         },
-        onFinish: (data) => {
+        onFinish: () => {
             toast('判题完成', 'success');
         },
         onTimeout: () => {
             toast('判题超时（> 30 分钟），请稍后查看提交列表', 'warn');
         },
         onError: (err) => {
-            // 静默：网络抖动不打扰用户；累计 > 3 次才警告
             const attempts = (poller && poller.getAttempt) ? poller.getAttempt() : 0;
             if (attempts > 0 && attempts % 10 === 0) {
                 console.warn('[submission-detail] poller fetch failed x', attempts, err && err.message);
@@ -143,13 +146,11 @@ function renderTopBar(id, detail) {
         class: 'btn btn--ghost btn--sm',
         href: '/submissions',
     }, '← 我的提交'));
-    const idSpan = createEl('span', { class: 'sd-top__id' }, `提交 #${id}`);
-    bar.appendChild(idSpan);
+    bar.appendChild(createEl('span', { class: 'sd-top__id' }, `提交 #${id}`));
     if (detail) {
-        bar.appendChild(statusBadge(detail.result || detail.status));
-        const score = createEl('span', { class: 'sd-top__score' },
-            `总分 ${detail.total_score || 0} / 100`);
-        bar.appendChild(score);
+        bar.appendChild(statusBadge(pickStatusBadgeCode(detail)));
+        bar.appendChild(createEl('span', { class: 'sd-top__score' },
+            formatTotalScore(detail.total_score)));
     }
     return bar;
 }
@@ -159,20 +160,30 @@ function renderMetaSkeleton() {
 }
 
 function renderMeta(detail) {
-    const wrap = createEl('div', { class: 'sd-meta' });
     const langInfo = LANG_BY_ID[detail.language] || { label: detail.language };
-    const items = [
-        ['用户',     detail.username || `id:${detail.user_id}`],
-        ['语言',     langInfo.label || detail.language],
+    const items = buildMetaItems({
+        username:      detail.username,
+        user_id:       detail.user_id,
+        language:      detail.language,
+        time_used_ms:  detail.time_used_ms,
+        memory_used_kb:detail.memory_used_kb,
+        created_at:    detail.created_at,
+        finished_at:   detail.finished_at,
+    }, langInfo);
+    // 把每行的 value 翻译成展示文案（ms → "15 ms"、KB → "4 MB"、ISO → "2026-04-23 10:00:00"）
+    const formatted = new Map([
         ['耗时',     formatTime(detail.time_used_ms)],
         ['内存',     formatMemory(detail.memory_used_kb)],
         ['提交时间', formatDateTime(detail.created_at)],
         ['判完时间', formatDateTime(detail.finished_at)],
-    ];
+    ]);
+
+    const wrap = createEl('div', { class: 'sd-meta' });
     for (const [k, v] of items) {
         const cell = createEl('div', { class: 'sd-meta__cell' });
         cell.appendChild(createEl('div', { class: 'sd-meta__k muted' }, k));
-        cell.appendChild(createEl('div', { class: 'sd-meta__v' }, v == null || v === '' ? '—' : String(v)));
+        const display = formatted.has(k) ? formatted.get(k) : v;
+        cell.appendChild(createEl('div', { class: 'sd-meta__v' }, display == null || display === '' ? '—' : String(display)));
         wrap.appendChild(cell);
     }
     return wrap;
@@ -207,7 +218,6 @@ function renderStatusMachineCard(detail) {
 function renderTabsAndBody(detail, hooks) {
     const wrap = createEl('div', { class: 'sd-tabs-wrap' });
 
-    // tab 头
     const head = createEl('div', { class: 'sd-tab-head' });
     const tabs = [
         { id: 'cases', label: `测试点 (${(detail.cases || []).length})` },
@@ -224,7 +234,6 @@ function renderTabsAndBody(detail, hooks) {
     tabBtns.forEach(b => head.appendChild(b));
     wrap.appendChild(head);
 
-    // tab body
     const bodyHost = createEl('div', { class: 'sd-body-host' });
     wrap.appendChild(bodyHost);
 
@@ -247,9 +256,7 @@ function renderTabsAndBody(detail, hooks) {
         }
     }
 
-    // 初次渲染：默认 cases
     switchTab('cases');
-    // body 元素名 = .sd-body（poller 用它做局部刷新）
     setTimeout(() => {
         const body = bodyHost.firstElementChild;
         if (body) body.classList.add('sd-body');
@@ -261,13 +268,8 @@ function renderCases(detail) {
     const cases = Array.isArray(detail.cases) ? detail.cases : [];
 
     if (!cases.length) {
-        const isEarly = EARLY_EXIT_RESULTS.has(detail.result);
-        const msg = isEarly
-            ? (detail.result === 'CE'
-                ? '编译失败，无测试点运行'
-                : '系统错误，无测试点结果')
-            : '判题中…测试点结果即将到达';
-        return createEl('div', { class: 'sd-cases sd-cases--empty muted' }, msg);
+        return createEl('div', { class: 'sd-cases sd-cases--empty muted' },
+            emptyCasesMessage(detail));
     }
 
     const table = createEl('table', { class: 'table sd-cases' });
@@ -291,12 +293,11 @@ function renderCases(detail) {
         tr.appendChild(createEl('td', null, statusBadge(c.status)));
         tr.appendChild(createEl('td', null, formatTime(c.time_used_ms)));
         tr.appendChild(createEl('td', null, formatMemory(c.memory_used_kb)));
-        tr.appendChild(createEl('td', null, `${c.score || 0} / 100`));
+        tr.appendChild(createEl('td', null, formatCaseScore(c.score)));
         tr.appendChild(createEl('td', null, c.is_sample ? '样例' : '隐藏'));
-        // 详情列：错点 → 查看按钮；AC → —；其余 → —
+        // 详情列：错点 → 查看按钮；其余 → —
         const actTd = createEl('td');
-        const isFail = FAIL_RESULTS.has(c.status);
-        if (isFail) {
+        if (shouldShowViewButton(c)) {
             const btn = createEl('button', {
                 class: 'btn btn--sm btn--secondary',
                 type: 'button',
@@ -320,7 +321,6 @@ function renderCode(detail, hooks) {
 
     const langInfo = LANG_BY_ID[detail.language] || {};
     const monacoLang = langInfo.monacoLang || 'plaintext';
-    // Monaco 异步加载 —— 等待；失败降级 textarea
     createEditorOrFallback(host, {
         value: detail.code || '',
         language: monacoLang,
@@ -335,15 +335,21 @@ function renderCode(detail, hooks) {
 }
 
 // =============================================================================
-//  错点弹窗
+//  错点弹窗 (SPEC §3.3.5 K)
+//
+//  - 样例点：3 列 (input / expected / user_output)
+//    · WA 时，user_output 列内嵌 LCS 行级 diff 染色（红 = 多出 / 灰 = 一致）
+//  - 隐藏点：仅显示 "为保护题目，不展示隐藏点详情"
 // =============================================================================
 function openCaseDialog(detail, c) {
-    // 先关闭已有的
+    // 关闭已有
     document.querySelectorAll('.sd-modal-mask').forEach(n => n.remove());
 
-    const isSample = !!c.is_sample;
+    const modal = buildModalColumns(c);
+    const isWa  = c.status === 'WA';
+
     const mask = createEl('div', { class: 'sd-modal-mask' });
-    const modal = createEl('div', { class: 'sd-modal' });
+    const dialog = createEl('div', { class: 'sd-modal' });
     const head  = createEl('div', { class: 'sd-modal__head' }, [
         createEl('h3', null, `测试点 #${c.case_index} · ${c.status}`),
         createEl('button', {
@@ -352,31 +358,76 @@ function openCaseDialog(detail, c) {
             onClick: () => mask.remove(),
         }, '关闭'),
     ]);
-    modal.appendChild(head);
-    const body = createEl('div', { class: 'sd-modal__body' });
+    dialog.appendChild(head);
 
-    if (isSample) {
-        const grid = createEl('div', { class: 'sd-diff-grid' });
-        grid.appendChild(makeDiffCol('输入 Input', c.input || ''));
-        grid.appendChild(makeDiffCol('预期输出', c.expected_output || ''));
-        grid.appendChild(makeDiffCol('你的输出', c.user_output || ''));
-        body.appendChild(grid);
+    const body = createEl('div', { class: 'sd-modal__body' });
+    if (modal.kind === 'hidden') {
+        body.appendChild(createEl('div', { class: 'sd-modal__hint' }, modal.hint));
     } else {
-        body.appendChild(createEl('div', { class: 'sd-modal__hint' },
-            '为保护题目，不展示隐藏点详情'));
+        const grid = createEl('div', { class: 'sd-diff-grid' });
+        // 三列
+        grid.appendChild(makeDiffCol(modal.columns[0].title, modal.columns[0].text, false));
+        grid.appendChild(makeDiffCol(modal.columns[1].title, modal.columns[1].text, false));
+        // WA: 第三列用 diff 高亮（否则纯文本）
+        if (isWa) {
+            grid.appendChild(makeDiffColFromDiff(modal.columns[2].title, modal.columns[1].text, modal.columns[2].text));
+        } else {
+            grid.appendChild(makeDiffCol(modal.columns[2].title, modal.columns[2].text, true));
+        }
+        body.appendChild(grid);
+        // diff 摘要
+        if (isWa) {
+            const diff = computeLineDiff(modal.columns[1].text, modal.columns[2].text);
+            const same = diff.filter(d => d.kind === 'same').length;
+            const total = diff.length;
+            body.appendChild(createEl('div', { class: 'sd-diff-summary muted' },
+                `行级 diff：共 ${total} 行，匹配 ${same} 行`));
+        }
     }
-    modal.appendChild(body);
-    mask.appendChild(modal);
+    dialog.appendChild(body);
+    mask.appendChild(dialog);
     mask.addEventListener('click', (e) => {
         if (e.target === mask) mask.remove();
     });
     document.body.appendChild(mask);
 }
 
-function makeDiffCol(title, text) {
+function makeDiffCol(title, text, isUserOutput) {
     return createEl('div', { class: 'sd-diff-col' }, [
         createEl('div', { class: 'sd-diff-col__title muted' }, title),
-        createEl('pre', { class: 'sd-diff-col__pre' }, text == null ? '' : String(text)),
+        createEl('pre', {
+            class: 'sd-diff-col__pre' + (isUserOutput ? ' sd-diff-col__pre--user' : ''),
+        }, text == null ? '' : String(text)),
+    ]);
+}
+
+/**
+ * 用 LCS 行级 diff 渲染 user_output。
+ * 同 expected 的行标灰底（.sd-diff-line--same），
+ * 多出来的行标红底（.sd-diff-line--added）。
+ * @param {string} title
+ * @param {string} expected
+ * @param {string} actual
+ */
+function makeDiffColFromDiff(title, expected, actual) {
+    const diffs = computeLineDiff(expected, actual);
+    const pre = createEl('pre', { class: 'sd-diff-col__pre sd-diff-col__pre--user' });
+    if (diffs.length === 0) {
+        pre.appendChild(document.createTextNode(''));
+    } else {
+        diffs.forEach((d, i) => {
+            const cls = d.kind === 'same'   ? 'sd-diff-line sd-diff-line--same'
+                      : d.kind === 'added'  ? 'sd-diff-line sd-diff-line--added'
+                      :                        'sd-diff-line sd-diff-line--removed';
+            const line = createEl('span', { class: cls }, d.text);
+            pre.appendChild(line);
+            // 行分隔：除最后一行外补一个 \n
+            if (i < diffs.length - 1) pre.appendChild(document.createTextNode('\n'));
+        });
+    }
+    return createEl('div', { class: 'sd-diff-col' }, [
+        createEl('div', { class: 'sd-diff-col__title muted' }, title),
+        pre,
     ]);
 }
 

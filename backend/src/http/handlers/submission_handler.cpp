@@ -20,6 +20,7 @@
 #include "domain/submission_service.hpp"
 #include "domain/submission_types.hpp"
 #include "http/HttpServer.hpp"
+#include "http/middleware/middleware.hpp"
 #include "infra/jwt_service.hpp"
 
 namespace oj::http::handlers {
@@ -195,9 +196,11 @@ void handle_create(const std::shared_ptr<oj::domain::ISubmissionService>& servic
                    const std::shared_ptr<JwtService>& jwt,
                    const std::function<bool()>& is_db_ready,
                    const httplib::Request& req, httplib::Response& res) {
+    namespace mw = oj::http::middleware;
+
     // 0) DB readiness
     if (is_db_ready && !is_db_ready()) {
-        write_error(res, ErrorCode::SystemError, "database not available");
+        mw::db_unavailable_response(res);
         return;
     }
 
@@ -209,23 +212,10 @@ void handle_create(const std::shared_ptr<oj::domain::ISubmissionService>& servic
         return;
     }
 
-    // 2) 解析 body
-    nlohmann::json body;
-    try {
-        if (req.body.empty()) {
-            write_error(res, ErrorCode::BadRequest, "request body is empty");
-            return;
-        }
-        body = nlohmann::json::parse(req.body);
-    } catch (const std::exception& e) {
-        write_error(res, ErrorCode::BadRequest,
-                    std::string{"invalid json: "} + e.what());
-        return;
-    }
-    if (!body.is_object()) {
-        write_error(res, ErrorCode::BadRequest, "request body must be a JSON object");
-        return;
-    }
+    // 2) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    auto body_opt = mw::parse_json_body(req, res);
+    if (!body_opt) return;
+    const auto& body = *body_opt;
 
     // 3) 字段提取 + 校验
     std::int64_t problem_id = 0;

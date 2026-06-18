@@ -505,6 +505,41 @@
     overflow: auto;
 }
 
+.sd-diff-col__pre--user {
+    /* "你的输出" 列：错点 (WA) 时用 LCS 行级 diff 染色 */
+    white-space: pre;
+}
+
+.sd-diff-line {
+    display: inline;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+.sd-diff-line--same {
+    color: var(--fg-3);                    /* 灰：与预期一致 */
+    background: transparent;
+}
+.sd-diff-line--added {
+    color: var(--fg-0);
+    background: rgba(248, 113, 113, 0.18); /* 红：多出来的行 */
+    border-left: 2px solid var(--st-wa, #f87171);
+    padding-left: 4px;
+}
+.sd-diff-line--removed {
+    /* 当前实现不在 user_output 列展示 removed（仅 expected / actual 双方对比后），保留定义以备扩展 */
+    color: var(--fg-3);
+    background: rgba(156, 163, 175, 0.12);
+    text-decoration: line-through;
+}
+
+.sd-diff-summary {
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-2);
+    border-top: 1px dashed var(--divider);
+    font-size: var(--fs-xs);
+    text-align: right;
+}
+
 /* =============================================================================
  *  提交列表页 (.sl-*)
  * ============================================================================= */

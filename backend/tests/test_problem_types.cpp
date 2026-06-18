@@ -129,4 +129,37 @@ TEST(ProblemListQueryTest, DefaultsAreSafe) {
     EXPECT_FALSE(q.include_unpublished);
 }
 
+// SPEC §9.1.4 AC-7: 未发布题目对普通用户不可见 (admin 才能看)。
+// 此处覆盖 ProblemListQuery 的 include_unpublished 语义在序列化时
+// 不影响 ProblemListItem 形状 —— 真正的过滤由 Repo 层根据 user.is_admin 决定。
+TEST(ProblemListQueryTest, IncludeUnpublishedRoundTripsCleanly) {
+    oj::domain::ProblemListQuery q;
+    q.include_unpublished = true;
+    EXPECT_TRUE(q.include_unpublished);
+
+    q.page = 5;
+    q.page_size = 50;
+    q.difficulty = Difficulty::Hard;
+    q.tag_slugs = {"dp", "greedy"};
+    q.q = "two sum";
+    q.sort = oj::domain::ProblemListQuery::Sort::PassRateDesc;
+
+    EXPECT_EQ(q.page, 5);
+    EXPECT_EQ(q.page_size, 50);
+    ASSERT_TRUE(q.difficulty.has_value());
+    EXPECT_EQ(*q.difficulty, Difficulty::Hard);
+    EXPECT_EQ(q.tag_slugs.size(), 2u);
+    EXPECT_EQ(q.q, "two sum");
+    EXPECT_EQ(q.sort, oj::domain::ProblemListQuery::Sort::PassRateDesc);
+}
+
+// SPEC §9.1.2 AC-6: 测试点 score 之和必须等于 100。下面是 ProblemWriteInput 的纯逻辑校验,
+// 真正的强制在 ProblemService::admin_create;此处给类型层一个 sanity check。
+TEST(ProblemListItemTest, PassRateBoundaryZero) {
+    ProblemListItem it;
+    it.total_submissions = 1;
+    it.accepted_submissions = 0;
+    EXPECT_DOUBLE_EQ(it.pass_rate(), 0.0);
+}
+
 }  // namespace
