@@ -424,3 +424,60 @@ Phase 7 验证过程中发现并就地修复的 4 个问题:
 Phase 7「打磨与验收」全部 5 项交付完成,端到端实测通过。  
 **SPEC §8 TODO 清单全部勾完** ✅,SPEC §9 验收清单全过 ✅。  
 v1.0 项目进入"可发布"状态。
+
+---
+
+## 8. 补遗：7-1 与 SPEC §3.2.3 完全一致
+
+> 触发：复审 7-1 时发现 `backend/config/default.json` 已经写了
+> `log.max_size_mb=100` / `log.max_files=10`,但 `LogConfig` 当时只声明了
+> `level/dir/stdout_console`,`init_logger()` 用的是硬编码 `100MB × 10`。
+> 配置与代码不一致,SPEC §3.2.3 的两项字段实际从未生效。
+> 本节把这些键真正接通。
+
+### 8.1 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `backend/include/common/config.hpp` | `LogConfig` 增加 `int max_size_mb{100}` + `int max_files{10}`,带 SPEC 注释 |
+| `backend/src/common/config.cpp` | 解析 `log.max_size_mb` / `log.max_files`,`≤0` / `<1` 直接抛 `ConfigError` 早失败 |
+| `backend/src/main.cpp` | `init_logger()` 用 `cfg.log.max_size_mb/max_files`(替换硬编码),启动时打一行 banner `logger initialized: level=..., dir=..., rotate=100MB x 10 files, stdout=on/off`;`--print-config` 同时打印新字段 |
+| `backend/tests/unit_tests.cpp` | 新增 5 项 `LogConfigTest`:默认值 = SPEC 基线 / 覆盖生效 / 拒绝 `max_size_mb=0` / 拒绝 `max_files=0` / 拒绝 `max_files=-3` |
+
+### 8.2 实测
+
+```bash
+$ ./build/oj_backend --print-config config/default.json
+{"...","log":{"level":"info","dir":"/var/log/oj","stdout":true,"max_size_mb":100,"max_files":10}}
+
+$ ./build/oj_backend --config /tmp/oj-tiny-log.json   # max_size_mb=1, max_files=3
+[info] logger initialized: level=info, dir=/tmp/oj-tiny-log, rotate=1MB x 3 files, stdout=off
+```
+
+```bash
+$ docker compose logs --no-color --tail=20 backend | grep -E "GET|POST"
+[info] GET /api/health       -> 200 (0ms,  user=0) [127.0.0.1]
+[info] POST /api/auth/login  -> 200 (2ms,  user=1) [172.21.0.1]   # Bearer 抽 user=1
+[info] GET  /api/submissions -> 200 (0ms,  user=1) [172.21.0.1]
+[info] GET  /no/such/path    -> 404 (0ms,  user=0) [172.21.0.1]
+```
+
+### 8.3 单测矩阵
+
+| Suite | 测试数 | 状态 |
+|---|---|---|
+| `LogConfigTest` | 5 | ✅ 新增 |
+| `AppConfigTest` | 9 | ✅ 既有,兼容 |
+| `HttpServerHooksTest` | 8 | ✅ 既有,access log 路径不变 |
+| **全套** | **682 → 584 PASS / 32 SKIPPED (MySQL)** | ✅ 较 Phase 7 +5 |
+
+### 8.4 SPEC §3.2.3 对照
+
+| SPEC 字段 | 默认值 | 是否生效 |
+|---|---|---|
+| `log.level` | `info` | ✅ |
+| `log.dir` | `/var/log/oj` | ✅ |
+| `log.max_size_mb` | `100` | ✅ (此前硬编码,现已走 config) |
+| `log.max_files` | `10` | ✅ (此前硬编码,现已走 config) |
+
+✅ 7-1 与 SPEC §3.2.3 完全一致。

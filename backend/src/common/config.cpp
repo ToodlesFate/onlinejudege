@@ -50,6 +50,22 @@ AppConfig parse(Src&& source, std::string_view origin_for_error) {
         if (auto p = l.find("level"); p != l.end() && p->is_string()) cfg.log.level = p->get<std::string>();
         if (auto p = l.find("dir");   p != l.end() && p->is_string()) cfg.log.dir   = p->get<std::string>();
         if (auto p = l.find("stdout"); p != l.end() && p->is_boolean()) cfg.log.stdout_console = p->get<bool>();
+        if (auto p = l.find("max_size_mb"); p != l.end() && p->is_number_integer()) {
+            int v = p->get<int>();
+            if (v > 0) {
+                cfg.log.max_size_mb = v;
+            } else {
+                throw ConfigError("log.max_size_mb must be > 0 (got " + std::to_string(v) + ")");
+            }
+        }
+        if (auto p = l.find("max_files"); p != l.end() && p->is_number_integer()) {
+            int v = p->get<int>();
+            if (v >= 1) {
+                cfg.log.max_files = v;
+            } else {
+                throw ConfigError("log.max_files must be >= 1 (got " + std::to_string(v) + ")");
+            }
+        }
     }
 
     if (auto it = root.find("mysql"); it != root.end() && it->is_object()) {

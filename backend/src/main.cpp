@@ -95,12 +95,19 @@ void init_logger(const oj::common::LogConfig& log) {
         sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
     }
 
+    // SPEC §2.6 / §3.2.3:spdlog 文件日志轮转 100MB × 10 份 (总上限 1 GB)
+    // 尺寸/份数现在从 LogConfig 读取,允许运维通过 config/default.json 调优;
+    // 配置解析阶段已确保 max_size_mb > 0、max_files >= 1,这里再做一次兜底。
+    const int max_size_mb  = log.max_size_mb  > 0 ? log.max_size_mb  : 100;
+    const int max_files    = log.max_files    >= 1 ? log.max_files    : 10;
+    const std::size_t rotate_bytes = static_cast<std::size_t>(max_size_mb) * 1024 * 1024;
+
     try {
         std::filesystem::create_directories(log.dir);
         auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
             (log.dir / "oj_backend.log").string(),
-            100 * 1024 * 1024,  // 100 MB
-            10                  // 10 files
+            rotate_bytes,
+            static_cast<std::size_t>(max_files)
         );
         sinks.push_back(std::move(file));
     } catch (const std::exception& e) {
@@ -113,6 +120,10 @@ void init_logger(const oj::common::LogConfig& log) {
     logger->flush_on(spdlog::level::warn);
     spdlog::set_default_logger(logger);
     spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+
+    spdlog::info("logger initialized: level={}, dir={}, rotate={}MB x {} files, stdout={}",
+                 log.level, log.dir.string(), max_size_mb, max_files,
+                 log.stdout_console ? "on" : "off");
 }
 
 struct Args {
@@ -205,7 +216,9 @@ int main(int argc, char** argv) {
                   << "\"log\":"   << "{"
                   << "\"level\":\"" << cfg.log.level << "\","
                   << "\"dir\":\""   << cfg.log.dir.string() << "\","
-                  << "\"stdout\":" << (cfg.log.stdout_console ? "true" : "false")
+                  << "\"stdout\":" << (cfg.log.stdout_console ? "true" : "false") << ","
+                  << "\"max_size_mb\":" << cfg.log.max_size_mb << ","
+                  << "\"max_files\":"   << cfg.log.max_files
                   << "}}\n";
         return 0;
     }

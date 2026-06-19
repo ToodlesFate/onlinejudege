@@ -133,6 +133,46 @@ TEST(AppConfigTest, LoadRejectsMalformedJson) {
 }
 
 // ---------------------------------------------------------------------------
+//  LogConfig — SPEC §3.2.3 / §2.6 可观测
+// ---------------------------------------------------------------------------
+
+TEST(LogConfigTest, DefaultsAreSpecBaseline) {
+    // SPEC §3.2.3: 默认 level=info / dir=/var/log/oj / 轮转 100MB × 10 份
+    TempConfigFile f("{}");
+    auto cfg = oj::common::AppConfig::load(f.path());
+    EXPECT_EQ(cfg.log.level,               "info");
+    EXPECT_EQ(cfg.log.dir,                 std::filesystem::path{"/var/log/oj"});
+    EXPECT_TRUE(cfg.log.stdout_console);
+    EXPECT_EQ(cfg.log.max_size_mb,         100);
+    EXPECT_EQ(cfg.log.max_files,           10);
+}
+
+TEST(LogConfigTest, HonorsRotationOverrides) {
+    TempConfigFile f(R"({
+        "log": {"max_size_mb": 50, "max_files": 5, "level": "debug"}
+    })");
+    auto cfg = oj::common::AppConfig::load(f.path());
+    EXPECT_EQ(cfg.log.max_size_mb, 50);
+    EXPECT_EQ(cfg.log.max_files,   5);
+    EXPECT_EQ(cfg.log.level,       "debug");
+}
+
+TEST(LogConfigTest, RejectsNonPositiveMaxSizeMb) {
+    TempConfigFile f(R"({"log": {"max_size_mb": 0}})");
+    EXPECT_THROW(oj::common::AppConfig::load(f.path()), oj::common::ConfigError);
+}
+
+TEST(LogConfigTest, RejectsZeroMaxFiles) {
+    TempConfigFile f(R"({"log": {"max_files": 0}})");
+    EXPECT_THROW(oj::common::AppConfig::load(f.path()), oj::common::ConfigError);
+}
+
+TEST(LogConfigTest, NegativeMaxFilesRejected) {
+    TempConfigFile f(R"({"log": {"max_files": -3}})");
+    EXPECT_THROW(oj::common::AppConfig::load(f.path()), oj::common::ConfigError);
+}
+
+// ---------------------------------------------------------------------------
 //  /api/health handler
 // ---------------------------------------------------------------------------
 TEST(HealthHandlerTest, Returns200Envelope) {

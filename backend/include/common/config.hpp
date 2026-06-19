@@ -22,10 +22,17 @@ struct ServerConfig {
     int          thread_pool_size{8};
 };
 
+// SPEC §3.2.3 / §2.6 可观测
+//   - spdlog 文件日志（轮转 100MB × 10 份） + stdout 容器日志
+//   - 实际尺寸 = max_size_mb * 1024 * 1024 字节；max_files 含当前活跃文件
 struct LogConfig {
     std::string level{"info"};
     std::filesystem::path dir{"/var/log/oj"};
     bool stdout_console{true};
+    // 单个日志文件最大尺寸（MB），默认 100。SPEC §3.2.3 固定 100。
+    int max_size_mb{100};
+    // 保留的轮转文件数（含活跃文件），默认 10。SPEC §3.2.3 固定 10。
+    int max_files{10};
 };
 
 // SPEC §3.2.3 / §7.2
