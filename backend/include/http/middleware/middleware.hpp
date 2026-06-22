@@ -15,6 +15,10 @@
 //    2. 与 Domain / Infra 解耦 —— 不持有任何 service / repo 指针,只通过
 //       req.get_header_value("Authorization") 解析 JWT,失败则 user_id=0。
 //    3. 可独立单测 —— 单元测试直接构造 Request/Response 调用中间件函数。
+//
+//  Phase 7.2: 统一错误中间件 (ErrorMiddleware) 实现在 error.hpp 里。
+//  本文件 include 它,handler 只需 #include "http/middleware/middleware.hpp"
+//  即可同时拿到 access_log / security / error 三件套。
 // =============================================================================
 
 #include <cstdint>
@@ -24,6 +28,8 @@
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+
+#include "http/middleware/error.hpp"  // 统一错误中间件 (HttpError / wrap_handler / ...)
 
 namespace oj::http {
 class HttpServer;  // forward declaration for middleware API
@@ -57,7 +63,26 @@ std::int64_t extract_user_id_from_bearer(const std::string& authz_header);
 // 与 HttpServer::install_exception_middleware 的区别:
 //   - HttpServer::install_exception_middleware 是基线实现 (cp-httplib 必须的兜底)
 //   - 这里允许替换错误消息 / 日志级别 / 状态码细节,但行为完全一致
+//
+// 该函数现在还负责确保 wrap_handler / HttpError 的所有符号可用 ——
+// 实际 wrap 是 per-route opt-in(新 handler 显式包一层),不影响既有 handler。
 void install_unified_error_handlers(oj::http::HttpServer& server);
+
+// Phase 7.2 统一错误中间件的高阶 API 全部在 http/middleware/error.hpp 里:
+//   - HttpError           业务层主动抛的"协议级"异常
+//   - wrap_handler(h)     包一层 cpp-httplib handler,统一 catch HttpError / std::exception
+//   - check_db_ready      "DB 不可用"1008 envelope 的"判断+写"二合一
+//   - parse_path_id       解析 :id 路径参数 → optional<int64>
+//   - parse_query_int     解析 ?key=123 query 参数 → optional<int64>
+//   - require_string_field 从 json body 提取 string 字段,缺/类型错抛 1001
+//
+// handler 推荐新写法:
+//     server.post("/api/x", mw::wrap_handler([&](const auto& req, auto& res) {
+//         if (some_validation_failed)
+//             throw mw::HttpError::bad_request("xxx");
+//         // ... 业务
+//         write_ok(res, data);
+//     }));
 
 // ---- security headers ------------------------------------------------------
 

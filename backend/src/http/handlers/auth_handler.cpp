@@ -125,52 +125,47 @@ std::optional<std::string> get_cookie_value(const std::string& cookie_header,
 }
 
 // POST /api/auth/register 的 handler 闭包
+//
+// Phase 7.2 改写:使用统一错误中间件(HttpError / wrap_handler)后,业务逻辑
+// 从"显式 if + write_error"风格切换为"抛 HttpError"风格,代码量减半、可读性
+// 提升,且所有错误响应路径自动走中间件统一日志(warn for 4xx / error for 5xx)。
+//
+// 注:Domain 层抛的 RegisterError 不是 std::runtime_error 的特殊派生类,不能
+// 直接被 wrap_handler 当 HttpError 翻译,这里在 handler 内显式做一次
+// "domain exception → HttpError"翻译,然后把 HttpError 抛给 wrap_handler。
+// std::exception / 其它未知异常由 wrap_handler 兜底为 1007 envelope。
 void handle_register(const std::shared_ptr<oj::domain::AuthService>& auth,
                      const std::function<bool()>& is_db_ready,
                      const httplib::Request& req, httplib::Response& res) {
     using oj::common::ErrorCode;
     namespace mw = oj::http::middleware;
 
-    // 0) DB 可用性检查 —— MySQL 不可达时返回 503（SPEC §2.6 可用性）
-    if (is_db_ready && !is_db_ready()) {
-        mw::db_unavailable_response(res);
-        return;
-    }
+    // 0) DB 可用性检查 —— 一行兜底;失败时已写 1008 envelope,直接 return
+    if (!mw::check_db_ready(res, is_db_ready)) return;
 
-    // 1) 解析 body (Phase 7: 复用 middleware::parse_json_body)
+    // 1) 解析 body (空 / 非 object / 解析错 由 parse_json_body 写 1001)
     auto body_opt = mw::parse_json_body(req, res);
     if (!body_opt) return;
     const auto& body = *body_opt;
 
-    // 2) 提取字段
-    auto get_string = [&](const char* key) -> std::string {
-        auto it = body.find(key);
-        if (it == body.end() || !it->is_string()) return {};
-        return it->get<std::string>();
-    };
-    const std::string username = get_string("username");
-    const std::string email    = get_string("email");
-    const std::string password = get_string("password");
-    if (username.empty() || email.empty() || password.empty()) {
-        write_error(res, ErrorCode::BadRequest,
-                    "username, email and password are required");
-        return;
-    }
+    // 2) 提取字段 —— 用 require_string_field;缺/类型错直接抛 HttpError::bad_request
+    const std::string username = mw::require_string_field(body, "username");
+    const std::string email    = mw::require_string_field(body, "email");
+    const std::string password = mw::require_string_field(body, "password");
 
-    // 3) 调 AuthService
+    // 3) 调 AuthService —— Domain Error → HttpError;其它异常由 wrap_handler 兜底
     oj::domain::RegisterResult result;
     try {
         result = auth->register_user(username, email, password);
     } catch (const oj::domain::RegisterError& e) {
         spdlog::info("register rejected: {} (kind={})",
                      e.what(), static_cast<int>(e.kind()));
-        write_error(res, map_register_error(e.kind()), e.what());
-        return;
-    } catch (const std::exception& e) {
-        spdlog::error("register internal error: {}", e.what());
-        write_error(res, ErrorCode::Internal, "internal server error");
-        return;
+        // 翻译为 HttpError,wrap_handler 会写对应 envelope + warn 日志
+        throw mw::HttpError(map_register_error(e.kind()), e.what());
     }
+
+    spdlog::info("register ok: user_id={} username='{}' is_admin={}",
+                 result.user_id, username, result.is_admin);
 
     // 4) 写 refresh_token cookie
     res.set_header("Set-Cookie",
@@ -183,8 +178,6 @@ void handle_register(const std::shared_ptr<oj::domain::AuthService>& auth,
         {"is_admin",     result.is_admin},
     };
     write_ok(res, std::move(data));
-    spdlog::info("register ok: user_id={} username='{}' is_admin={}",
-                 result.user_id, username, result.is_admin);
 }
 
 // POST /api/auth/login 的 handler 闭包 —— SPEC §5.2.1
@@ -322,9 +315,14 @@ void register_auth_routes(HttpServer& server,
                           std::function<bool()> is_db_ready) {
     auto sp_auth = std::move(auth);
     auto sp_ready = std::move(is_db_ready);
-    server.post("/api/auth/register", [sp_auth, sp_ready](const httplib::Request& req, httplib::Response& res) {
-        handle_register(sp_auth, sp_ready, req, res);
-    });
+
+    // Phase 7.2: register 路由已迁移到 HttpError 风格,套 wrap_handler
+    // 让未预期的 std::exception 自动转 1007 envelope。
+    // login / refresh 暂保留旧 write_error 风格 —— wrap_handler 是 opt-in。
+    server.post("/api/auth/register", oj::http::middleware::wrap_handler(
+        [sp_auth, sp_ready](const httplib::Request& req, httplib::Response& res) {
+            handle_register(sp_auth, sp_ready, req, res);
+        }));
     server.post("/api/auth/login", [sp_auth, sp_ready](const httplib::Request& req, httplib::Response& res) {
         handle_login(sp_auth, sp_ready, req, res);
     });

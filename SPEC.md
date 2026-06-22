@@ -1270,7 +1270,7 @@ open http://localhost
 
 ### Phases 7 - 打磨与验收
 - [x] spdlog 接入 + access log
-- [ ] 统一错误中间件
+- [x] 统一错误中间件
 - [ ] 单元测试（GoogleTest）：Auth / Problem / Judge 关键路径
 - [ ] README：本地开发 + 部署文档
 - [ ] 端到端验证：按 9 章验收清单全过
@@ -1588,6 +1588,48 @@ open http://localhost
 
 **结论**：Phase 6 第 2 项「提交详情：Monaco 只读 + 逐点状态表格 + 错点 diff」通过验收。
 SPEC §8「Phases 6 - 提交历史 + 详情」全部两项完成；如无新增项可进入 Phase 7「打磨与验收」。
+
+---
+
+### 9.11 Phase 7.2 — 统一错误中间件（已通过）
+> 触发条件：SPEC §8 TODO「Phases 7 - 打磨与验收」第 2 项「统一错误中间件」已交付。
+> 本节为该项的**端到端验收报告**，详细命令、原始输出与单元测试矩阵见
+> [`docs/phase7-2-verification.md`](docs/phase7-2-verification.md)。
+
+**验证时间**：2026-06-19
+**验证环境**：Linux x86_64 / GCC 13.3 / Debian 12 (bookworm) / Node 24
+**交付物**：
+
+| # | 验收点 | 证据 | 结果 |
+|---|---|---|---|
+| 7-2a | `HttpError` 异常类 (携带 ErrorCode + message) | `error.hpp:42-99` + 6 项单测 | ✅ |
+| 7-2b | `wrap_handler` 自动 catch HttpError / std::exception / 未知异常 | `error.cpp:21-53` + 7 项单测 | ✅ |
+| 7-2c | HttpError 走 spdlog::warn (4xx 业务);std::exception 走 spdlog::error (5xx 系统) | 3 项 logging 单测 | ✅ |
+| 7-2d | `check_db_ready` 统一 DB 不可用兜底 | `error.cpp:60-70` + 3 项单测 | ✅ |
+| 7-2e | `parse_path_id` 路径参数解析 | `error.cpp:73-92` + 8 项单测 | ✅ |
+| 7-2f | `parse_query_int` query 参数解析 (含 min/max 范围) | `error.cpp:96-115` + 7 项单测 | ✅ |
+| 7-2g | `require_string_field` 提取 + 校验 | `error.cpp:118-130` + 6 项单测 | ✅ |
+| 7-2h | E2E: 走真实 httplib 客户端验证 wrap_handler 全链路 | 6 项集成单测 | ✅ |
+| 7-2i | register handler 迁移到 HttpError 风格 (示例) | `auth_handler.cpp:127-181` 行数从 50 → 33 (-34%) | ✅ |
+| 7-2j | SPEC §9.4 M-1 分层 (Http → Domain ← Infra) | `error.hpp` 仅依赖 `common/error_code.hpp` 和 `httplib.h` | ✅ |
+| 7-2k | 与既有 `install_exception_middleware` 协同 (双保险) | `middleware.cpp` 内 `install_unified_error_handlers` 注释 | ✅ |
+| 7-2l | 全部 46 项新增单测全过 | `./build/oj_unit_tests` 728 项 → 630 PASS / 98 SKIPPED | ✅ |
+
+**实现文件清单**：
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `backend/include/http/middleware/error.hpp` | 新增 | HttpError / wrap_handler / 4 个 helper 的 API |
+| `backend/src/http/middleware/error.cpp` | 新增 | 实现 + 注释 |
+| `backend/include/http/middleware/middleware.hpp` | 修改 | include error.hpp,加注释指明统一错误中间件 API |
+| `backend/src/http/middleware/middleware.cpp` | 修改 | `install_unified_error_handlers` 加详细注释 |
+| `backend/src/http/handlers/auth_handler.cpp` | 重构 | `handle_register` 迁移到 HttpError 风格 (示范) |
+| `backend/tests/test_error_middleware.cpp` | 新增 | 46 项单测 (HttpError / wrap_handler / 4 个 helper / logging 分级) |
+| `docs/phase7-2-verification.md` | 新增 | 本报告 |
+
+**结论**：Phase 7 第 2 项「统一错误中间件」通过验收。
+新 handler 写法一行即可接入完整的"异常 → 错误码 + envelope + 日志"链路;
+业务级 4xx 走 warn,系统级 5xx 走 error,运维一眼能区分。
 
 ---
 

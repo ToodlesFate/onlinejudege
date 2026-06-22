@@ -146,6 +146,15 @@ void install_access_log(HttpServer& server, int warn_threshold_ms) {
 void install_unified_error_handlers(HttpServer& server) {
     // 当前 HttpServer 基线已经统一处理了 4xx/5xx 与 unhandled exception,
     // 本函数作为对外的稳定 API 给测试 / 嵌入式复用,内部直接调 HttpServer 基线。
+    //
+    // 业务层新增的 HttpError / wrap_handler 是 per-route opt-in(在
+    // register_auth_routes 等地方显式套 wrap_handler),不需要在 server 级别
+    // 额外挂 hook —— wrap_handler 内部会 catch HttpError 后写 envelope。
+    //
+    // 这里 install_exception_middleware 的作用是"双保险":
+    //   - 任何未被 wrap_handler 包过的 handler 抛异常 → 1007 envelope
+    //   - 已经被 wrap_handler 包过的 handler 抛 HttpError → wrap_handler 内部
+    //     已处理;若意外漏出 std::exception,仍由 set_exception_handler 兜底
     server.install_exception_middleware();
 }
 
