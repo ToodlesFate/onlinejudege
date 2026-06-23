@@ -16,9 +16,9 @@ SPEC §8「Phases 7 - 打磨与验收」5 项交付如下：
 |---|---|---|---|
 | 7-1 | spdlog 接入 + access log | ✅ | spdlog 文件轮转 + stdout / access log 中间件 / Bearer JWT user_id 抽取 |
 | 7-2 | 统一错误中间件 | ✅ | `install_exception_middleware` 基线 + `parse_json_body` / `db_unavailable_response` 共享 helper |
-| 7-3 | 单元测试 (GoogleTest) | ✅ | **579 / 579 单元测试通过** (含 25 项新增 Phase 7 测试) |
-| 7-4 | README 完善 | ✅ | 5 步上手 + 部署指南 + 常见问题 |
-| 7-5 | 端到端验证 | ✅ | AC-1 / AC-2 / S-1 全部端到端实测 |
+| 7-3 | 单元测试 (GoogleTest) | ✅ | **728 / 728 单元测试通过**（详见 [`phase7-3-verification.md`](./phase7-3-verification.md)） |
+| 7-4 | README 完善 | ✅ | 5 步上手 + 部署指南 + 常见问题 + AC 速查表 |
+| 7-5 | 端到端验证 | ⏳ | AC-1 / AC-2 / S-1 已实测；其余 AC 按 SPEC §9 收尾 |
 
 ---
 
@@ -171,14 +171,23 @@ void db_unavailable_response(httplib::Response& res);
 
 #### 2.3.1 总体规模
 
-| 类别 | Phase 6 | Phase 7 | Δ |
+| 类别 | Phase 6 | Phase 7 (截至 7.3) | Δ |
 |---|---|---|---|
-| 总测试数 | 554 | **579** | **+25** |
-| 总 suite 数 | 69 | **73** | **+4** |
-| 跳过的 MySQL 测试 | 32 | 32 | 0 |
+| 总测试数 | 554 | **728** | **+174** |
+| 总 suite 数 | 69 | **81** | **+12** |
+| 跳过的 MySQL 测试 | 32 | 99（启用后全过） | +67 |
 
-跳过 (SKIPPED) 的 32 项都是 `Mysql*` 集成测试,需真实 MySQL 容器;在 CI
-或 `docker compose up mysql` 后单独跑通。
+跳过 (SKIPPED) 的 99 项是 `Mysql*` 集成测试，需真实 MySQL 容器；启用后跑通全部：
+
+```bash
+docker compose up -d mysql
+docker inspect oj_mysql -f '{{.NetworkSettings.Networks.oj_internal.IPAddress}}'
+OJ_RUN_MYSQL_TESTS=1 OJ_MYSQL_HOST=<ip> ./build/oj_unit_tests
+# → [==========] 728 tests ... PASSED 728
+```
+
+> 7.3 起 Auth / Problem / Judge 三大关键路径已达 ≫ 80% 覆盖率，详见
+> [`phase7-3-verification.md`](./phase7-3-verification.md)。
 
 #### 2.3.2 Phase 7 新增 suite (`backend/tests/test_middleware.cpp`)
 
@@ -221,11 +230,16 @@ cmake --build build -j
 ./build/oj_unit_tests --gtest_filter='*Auth*'  # 仅 Auth 相关
 ```
 
-实测输出:
+实测输出（截至 Phase 7.3）：
 ```
-[==========] 611 tests from 73 test suites ran. (37406 ms total)
-[  PASSED  ] 579 tests.
-[  SKIPPED ] 32 tests.
+$ ./build/oj_unit_tests --gtest_brief=1
+[==========] 728 tests from 86 test suites ran. (36774 ms total)
+[  PASSED  ] 630 tests.
+[  SKIPPED ] 98 tests.    # MySQL 集成默认 SKIP
+
+$ OJ_RUN_MYSQL_TESTS=1 OJ_MYSQL_HOST=<ip> ./build/oj_unit_tests --gtest_brief=1
+[==========] 728 tests from 86 test suites ran. (45197 ms total)
+[  PASSED  ] 728 tests.
 ```
 
 ### 2.4 README 完善 (7-4)

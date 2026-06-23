@@ -1271,8 +1271,8 @@ open http://localhost
 ### Phases 7 - 打磨与验收
 - [x] spdlog 接入 + access log
 - [x] 统一错误中间件
-- [ ] 单元测试（GoogleTest）：Auth / Problem / Judge 关键路径
-- [ ] README：本地开发 + 部署文档
+- [x] 单元测试（GoogleTest）：Auth / Problem / Judge 关键路径
+- [x] README：本地开发 + 部署文档
 - [ ] 端到端验证：按 9 章验收清单全过
 
 ---

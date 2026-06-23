@@ -8,8 +8,10 @@
 
 ## 当前进度
 
-**Phase 1 – 6 全部完成 ✅，Phase 7（打磨与验收）✅**。
-`docker compose up -d --build` 一次成功 ~30 s，mysql / backend / frontend 均 healthy，
+**Phase 1 – 6 全部完成 ✅**；Phase 7（打磨与验收）进行中——已完成 spdlog / 统一错误中间件 / 本 README，
+剩余端到端验收（SPEC §9.1 / §9.2 全套）按计划推进。
+
+`docker compose up -d --build` 一次成功 ~30 s（warm cache），mysql / backend / frontend 均 healthy，
 `/api/health` 返回标准信封格式，5 种语言判题镜像就绪。
 
 | Phase | 交付 | 验收报告 |
@@ -20,7 +22,7 @@
 | 4 — 判题子系统 | judge 工具 + 5 语言镜像 + DockerClient | （含在 phase6-2） |
 | 5 — 后台管理 | admin CRUD + 测试点动态增删 | [`docs/phase5-verification.md`](./docs/phase5-verification.md) |
 | 6 — 提交历史 + 详情 | 个人/公共列表 + 错点 diff | [`docs/phase6-1-verification.md`](./docs/phase6-1-verification.md)、[`docs/phase6-2-verification.md`](./docs/phase6-2-verification.md) |
-| 7 — 打磨与验收 | spdlog / 错误中间件 / 单元测试 / README | [`docs/phase7-verification.md`](./docs/phase7-verification.md) |
+| 7 — 打磨与验收 | spdlog ✅ / 错误中间件 ✅ / 单元测试 ✅ / **README** ✅ / 端到端 ⏳ | [`docs/phase7-verification.md`](./docs/phase7-verification.md)、[`docs/phase7-2-verification.md`](./docs/phase7-2-verification.md)、[`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md) |
 
 ---
 
@@ -31,16 +33,36 @@ onlinejudge/
 ├── SPEC.md                ← 需求与设计基线
 ├── README.md              ← 本文件
 ├── docker-compose.yml     ← 一键启动
+├── dependence.md          ← 宿主机开发环境一键安装脚本
 ├── .gitignore
 ├── .dockerignore
 │
 ├── backend/               ← C++20 后端 (Http / Domain / Infra / Common 四层)
 ├── frontend/              ← 原生 HTML / CSS / JS (History API SPA)
 ├── judge-images/          ← 5 种语言的判题沙箱镜像
-├── mysql/initdb/          ← 首次启动自动建表 SQL
+├── judge-tool/            ← 容器内判题工具源码 (静态编译进各镜像)
 ├── nginx/                 ← 前端反向代理 (SPA fallback + /api 反代)
 └── docs/                  ← 各 Phase 验收报告
 ```
+
+## 技术栈
+
+| 层 | 选型 | 说明 |
+|---|---|---|
+| 后端语言 | C++20 | gcc-13，依赖通过 CMake FetchContent / apt 安装 |
+| HTTP | cpp-httplib | 头文件库，单进程即可跑 |
+| 异步 I/O | libcurl | 调用 Docker Engine REST API（HTTP over UNIX socket） |
+| 数据库 | MySQL 8.0 + libmysqlclient | 连接池（≥ 8）+ RAII Lease |
+| 密码哈希 | libargon2 | Argon2id，PHC 编码存储于 `users.password_hash` |
+| JWT | jwt-cpp | HS256，Access 2h + Refresh 7d（HttpOnly Cookie） |
+| JSON | nlohmann/json | 服务端 JSON 序列化 |
+| 日志 | spdlog | 文件轮转 100 MB × 10 份 + stdout |
+| 前端 | 原生 HTML/CSS/JS | 无构建工具，History API SPA，深色主题 |
+| 编辑器 | Monaco Editor 0.45（CDN） | 多语言、只读模式、草稿自动保存 |
+| Markdown | markdown-it（CDN） | 题面渲染 + 后台编辑实时预览 |
+| 反代 | nginx:alpine | SPA fallback + `/api` 反代 + CSP/安全响应头 |
+| 判题沙箱 | Docker Engine API | 5 个一次性容器，`network=none` + `cap-drop ALL` + rlimit |
+| 编排 | Docker Compose v2 | 一键启停 mysql / backend / frontend + judges profile |
 
 ---
 
@@ -67,6 +89,36 @@ open http://localhost
 | 80   | frontend (nginx) | 浏览器主入口 |
 | 8080 | backend 直连     | 调试 / 移动端 |
 | 3306 | MySQL            | 仅 docker 内部 |
+
+### 验证安装（SPEC §9.1 AC-1 / AC-2）
+
+启动后依次跑下面 4 条命令，全部预期符合即说明一键启动通过：
+
+```bash
+# 1) 所有服务 healthy（STATUS 列应为 'Up (healthy)'）
+docker compose ps
+
+# 2) 后端 /api/health 返回标准信封 {code:0, message:"ok", data:{...}}
+curl -s http://localhost:8080/api/health | jq .
+
+# 3) 经 nginx 反代同样可访问
+curl -s http://localhost/api/health | jq .
+
+# 4) 浏览器访问 http://localhost 首页能渲染（DOM 不报 JS 错）
+curl -sI http://localhost/ | head -1      # → HTTP/1.1 200 OK
+```
+
+若任一步骤失败，先看日志：
+```bash
+docker compose logs -f --tail=200 mysql backend frontend
+```
+
+判题镜像验证（AC-8 关键路径）：
+```bash
+docker compose --profile judges build           # 一次性构建 5 个判题镜像
+./judge-images/smoke.sh                        # AC + TLE 双覆盖 smoke
+# 预期: pass=10  fail=0   （每语言 2 个用例）
+```
 
 ---
 
@@ -117,12 +169,20 @@ cmake --build build
 ```bash
 cd backend
 cmake --build build -j
-./build/oj_unit_tests                    # 全部
-./build/oj_unit_tests --gtest_filter='*Auth*'   # 只跑 Auth 相关
+./build/oj_unit_tests                          # 全部 (MySQL 类默认 SKIP)
+./build/oj_unit_tests --gtest_filter='*Auth*'  # 只跑 Auth 相关
 ```
 
-> 当前规模 (Phase 7): **579 项单元测试**,全部通过 (不含需 MySQL 的 32 项)。
-> 跑全套需先启动 docker compose 的 mysql 容器,默认 `localhost:3306`。
+> 当前规模 (Phase 7.3): **728 项单元测试 / 81 个 suite 全部 PASS**
+> (含 99 项 MySQL 集成；详见 [`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md))。
+> 跑全套需先启动 docker compose 的 mysql 容器:
+> ```bash
+> docker compose up -d mysql
+> docker inspect oj_mysql -f '{{.NetworkSettings.Networks.oj_internal.IPAddress}}'
+> # 假设输出 172.21.0.2
+> OJ_RUN_MYSQL_TESTS=1 OJ_MYSQL_HOST=172.21.0.2 ./build/oj_unit_tests
+> ```
+> 按域过滤: `--gtest_filter='*Problem*:*Admin*'` / `*Judge*:*Submission*:*Docker*`
 
 #### 离线 / 内网构建 (可选)
 
@@ -157,6 +217,37 @@ git clone <repo>
 cd onlinejudge
 docker compose up -d --build          # ~30s warm cache / ~5min cold
 ```
+
+### 端到端验证清单（SPEC §9.1 AC 速查）
+
+一键启动完成后，按顺序执行即可验证"注册 → 出题 → 做题 → 提交 → AC"完整链路：
+
+| AC# | 验证项 | 操作 |
+|---|---|---|
+| AC-1 | 5 分钟启动 | `time docker compose up -d --build` |
+| AC-2 | 首页可访问 | 浏览器打开 `http://localhost` |
+| AC-3 | 首注册为 admin | 注册账号 A → 退出 → 注册账号 B → B 进入后台被拒 |
+| AC-4 | 参数/唯一性校验 | 重复用户名 / 密码 < 8 / 邮箱非法 → 1005 / 1001 |
+| AC-5 | 后台出题 | 用 A 登录 → `/admin/problems/new` → 创建"两数之和"题 |
+| AC-6 | 测试点总分 ≠ 100 禁用 | 在 admin 表单 score 之和 ≠ 100 → [保存] disabled |
+| AC-7 | 未发布不可见 | B 用普通账号登录 → `/problems` 看不到草稿 |
+| AC-8 | AC 提交 | 用 B 在题详情页提交正确代码 → result=AC, score=100 |
+| AC-9 | TLE | 提交 `while(1){}` → result=TLE |
+| AC-10 | WA | 提交 `printf("0\n")` → result=WA |
+| AC-11 | CE | C++ 故意写错语法 → result=CE，查看 compile_output |
+| AC-12 | RE | 提交除以 0 的代码 → result=RE |
+| AC-13 | while 死循环不挂死 | Java/Python/C++ 各自跑 `while(1){}` → TLE |
+| AC-14 | fork bomb 不挂死 | shell 容器不存在；提交层已 network=none + pids-limit |
+| AC-15 | 无网络 | 代码 `curl http://example.com` → RE/TLE |
+| AC-16 | 只读根文件系统 | 代码读 `/etc/passwd` → 容器只读失败 |
+| AC-17 | 提交列表分页 | `/submissions` 翻页正确 |
+| AC-18 | AC 公开 | B 的 AC 提交对匿名用户可见，WA 提交仅自己可见 |
+| AC-19 | 错点详情 | WA 提交详情页点 [查看] → diff 弹窗，样例点 3 列、隐藏点占位 |
+| AC-20 | 50 并发 | `seq 50 \| xargs -I{} curl ...` 同一份 AC 代码 → 全 AC |
+| AC-21 | 排队 | 50 并发时第 5 个进入 queued，2s 内被 worker 拾取 |
+| AC-22 | MySQL 故障 | `docker compose stop mysql` → API 返回 503；`start mysql` 后恢复 |
+
+性能 / 安全 / 可维护性验收（SPEC §9.2 / §9.3 / §9.4）见 `docs/phase7-verification.md`。
 
 ### 端口与网络
 
@@ -249,6 +340,32 @@ Ubuntu 24.04+ 同理。
 **Q: 编译报错 "spdlog not found" / "nlohmann_json not found"?**  
 A: 内网环境请按上文"离线 / 内网构建"克隆依赖到 `backend/.local-deps/`。
 
+**Q: 想单独验证 5 个判题镜像都能跑？**  
+```bash
+docker compose --profile judges build   # 一次性构建
+./judge-images/smoke.sh                 # AC + TLE 各 5 个用例 = 10 全过
+```
+失败时会在 stdout 列出每个失败用例的实际 result 字段和 `summary.json` 前 10 行,
+配合对应镜像的 Dockerfile / `judge-images/common/entrypoint.sh` 排查。
+
+**Q: 想自己重新编译判题工具 (judge-tool)？**  
+```bash
+cd judge-tool
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+# 静态二进制 build/judge 已产出, 重跑 ./judge-images/build.sh 即可重新打包到各镜像
+```
+
+**Q: 跑前端单元测试？**  
+```bash
+cd frontend
+node --check js/*.js js/**/*.js                # 语法校验
+node tests/<file>.test.mjs                     # 单文件, 例:
+node tests/poller.test.mjs                     # 22 项 poller 单测
+node tests/problem-cases.test.mjs              # 27 项测试点校验
+node tests/submission-detail-helpers.test.mjs  # 50 项 diff / LCS
+```
+
 ---
 
 ## 文档
@@ -262,6 +379,8 @@ A: 内网环境请按上文"离线 / 内网构建"克隆依赖到 `backend/.loca
 - [`docs/phase6-1-verification.md`](./docs/phase6-1-verification.md) — Phase 6-1 提交列表
 - [`docs/phase6-2-verification.md`](./docs/phase6-2-verification.md) — Phase 6-2 提交详情 + 错点 diff
 - [`docs/phase7-verification.md`](./docs/phase7-verification.md) — Phase 7 打磨与验收
+- [`docs/phase7-2-verification.md`](./docs/phase7-2-verification.md) — Phase 7-2 统一错误中间件
+- [`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md) — Phase 7-3 单元测试 (Auth/Problem/Judge 728 PASS)
 
 ---
 
