@@ -8,8 +8,7 @@
 
 ## 当前进度
 
-**Phase 1 – 6 全部完成 ✅**；Phase 7（打磨与验收）进行中——已完成 spdlog / 统一错误中间件 / 本 README，
-剩余端到端验收（SPEC §9.1 / §9.2 全套）按计划推进。
+**Phase 1 – 7 全部完成 ✅**（端到端 33/33 验收点全过，详见 [`docs/phase7-5-verification.md`](./docs/phase7-5-verification.md)）。
 
 `docker compose up -d --build` 一次成功 ~30 s（warm cache），mysql / backend / frontend 均 healthy，
 `/api/health` 返回标准信封格式，5 种语言判题镜像就绪。
@@ -22,7 +21,7 @@
 | 4 — 判题子系统 | judge 工具 + 5 语言镜像 + DockerClient | （含在 phase6-2） |
 | 5 — 后台管理 | admin CRUD + 测试点动态增删 | [`docs/phase5-verification.md`](./docs/phase5-verification.md) |
 | 6 — 提交历史 + 详情 | 个人/公共列表 + 错点 diff | [`docs/phase6-1-verification.md`](./docs/phase6-1-verification.md)、[`docs/phase6-2-verification.md`](./docs/phase6-2-verification.md) |
-| 7 — 打磨与验收 | spdlog ✅ / 错误中间件 ✅ / 单元测试 ✅ / **README** ✅ / 端到端 ⏳ | [`docs/phase7-verification.md`](./docs/phase7-verification.md)、[`docs/phase7-2-verification.md`](./docs/phase7-2-verification.md)、[`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md) |
+| 7 — 打磨与验收 | spdlog ✅ / 错误中间件 ✅ / 单元测试 ✅ / **README** ✅ / 端到端 ✅ | [`docs/phase7-verification.md`](./docs/phase7-verification.md)、[`docs/phase7-2-verification.md`](./docs/phase7-2-verification.md)、[`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md)、[`docs/phase7-5-verification.md`](./docs/phase7-5-verification.md) |
 
 ---
 
@@ -381,6 +380,7 @@ node tests/submission-detail-helpers.test.mjs  # 50 项 diff / LCS
 - [`docs/phase7-verification.md`](./docs/phase7-verification.md) — Phase 7 打磨与验收
 - [`docs/phase7-2-verification.md`](./docs/phase7-2-verification.md) — Phase 7-2 统一错误中间件
 - [`docs/phase7-3-verification.md`](./docs/phase7-3-verification.md) — Phase 7-3 单元测试 (Auth/Problem/Judge 728 PASS)
+- [`docs/phase7-5-verification.md`](./docs/phase7-5-verification.md) — Phase 7-5 端到端验证 (33/33 AC PASS)
 
 ---
 

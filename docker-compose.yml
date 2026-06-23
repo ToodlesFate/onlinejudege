@@ -82,8 +82,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # SPEC §3.2.3 log.dir=/var/log/oj
       - backend_logs:/var/log/oj
-      # SPEC §6.1 /judge/host <-> /judge/work 临时目录 (容器内 /tmp/oj)
-      - judge_work:/tmp/oj
+      # SPEC §6.1 /judge/host <-> /judge/work 临时目录
+      # 必须用 bind mount 而非 volume —— 判题容器由 backend 通过 docker API 创建，
+      # Docker daemon 解析 mount.Source 时看到的是 *宿主机* 路径，不是 backend 容器内路径
+      - /tmp/oj:/tmp/oj
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
       interval: 15s
@@ -172,8 +174,6 @@ volumes:
     name: oj_mysql_data
   backend_logs:
     name: oj_backend_logs
-  judge_work:
-    name: oj_judge_work
 
 # ----------------------------------------------------------------------------
 #  内部网络 — MySQL 仅 backend 可见, frontend / judge 容器均不加入

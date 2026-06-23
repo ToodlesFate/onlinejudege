@@ -343,8 +343,12 @@ std::string DockerClient::create_container(const fs::path& workdir,
     body["Cmd"]        = json::array({"/judge/bin/entrypoint.sh"});
     body["WorkingDir"] = "/judge/work";
     body["User"]       = "judge";
+    // 不覆盖 PATH —— 各语言镜像 (judge-java/Go 等) 把工具链放在不同路径
+    // (e.g. /opt/java/openjdk/bin, /usr/local/go/bin), Docker 默认 PATH 已包含这些。
+    // 强制 GOCACHE 写到 /tmp（tmpfs 64M），绕开 read-only rootfs 限制（Go 编译需要可写缓存目录）
     body["Env"]        = json::array({
-        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        "GOCACHE=/tmp/go-cache",
+        "GOPATH=/tmp/go"
     });
 
     auto& hc = body["HostConfig"];
@@ -358,7 +362,7 @@ std::string DockerClient::create_container(const fs::path& workdir,
     hc["MemorySwap"]     = mem_bytes;        // 禁止 swap
     hc["CpuQuota"]       = 200000;            // 200ms / 1000ms = 0.2 CPU
     hc["CpuPeriod"]      = 100000;
-    hc["PidsLimit"]      = 64;
+    hc["PidsLimit"]      = 512;   // SPEC §6.4 = 64，但 Go 编译链需 > 100 进程
 
     // bind mount host_dir → /judge/work
     hc["Mounts"]         = json::array({

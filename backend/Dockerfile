@@ -67,8 +67,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 非 root 运行（SPEC §6.4 判题机内部用 judge 用户；后端容器同样收敛权限）
+# DOCKER_GID 默认 988（Ubuntu/Debian 主机 docker 组的常见 gid），可通过 --build-arg 覆盖
+ARG DOCKER_GID=988
 RUN groupadd --system --gid 1000 oj \
-    && useradd  --system --uid 1000 --gid oj --create-home --shell /usr/sbin/nologin oj
+    && useradd  --system --uid 1000 --gid oj --create-home --shell /usr/sbin/nologin oj \
+    && groupadd --system --gid ${DOCKER_GID} docker_host 2>/dev/null || true \
+    && usermod -aG docker_host oj
 
 WORKDIR /app
 
@@ -76,8 +80,8 @@ WORKDIR /app
 COPY --from=builder /install/bin/oj_backend   /usr/local/bin/oj_backend
 COPY --from=builder /install/share/onlinejudge/config/default.json  /app/config/default.json
 
-# 日志目录（spdlog 轮转目录，参见 SPEC §3.2.3）
-RUN mkdir -p /var/log/oj && chown -R oj:oj /var/log/oj /app
+# 日志目录（spdlog 轮转目录，参见 SPEC §3.2.3）+ 判题工作目录（SPEC §6.1）
+RUN mkdir -p /var/log/oj /tmp/oj && chown -R oj:oj /var/log/oj /tmp/oj /app
 USER oj
 
 EXPOSE 8080
